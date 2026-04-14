@@ -1,99 +1,111 @@
 <!DOCTYPE html>
 <html lang="it">
+
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Gestione Utenze</title>
-  <link rel="stylesheet" href="style.css" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Gestione Utenze</title>
+
+<link rel="stylesheet" href="style.css">
+
 </head>
+
 <body>
-  <header class="topbar">
-    <h1>Gestione Utenze</h1>
-    <p class="subtitle">Tieni sotto controllo bollette, scadenze e PDF</p>
-  </header>
 
-  <nav class="navbar">
-    <button onclick="showSection('dashboard')">Dashboard</button>
-    <button onclick="showSection('utenze')">Utenze</button>
-    <button onclick="showSection('fatture')">Fatture</button>
-    <button onclick="showSection('archivio')">Archivio</button>
-  </nav>
+<header>
 
-  <main class="container">
-    <section id="dashboard" class="section">
-      <div class="card">
-        <h2>Scadenze vicine</h2>
-        <div id="scadenze" class="list-box"></div>
-      </div>
+<h1>Gestione Utenze</h1>
 
-      <div class="card stats-grid">
-        <div class="stat-item">
-          <span class="stat-label">Totale fatture</span>
-          <strong id="totFatture">0</strong>
-        </div>
-        <div class="stat-item">
-          <span class="stat-label">Da pagare</span>
-          <strong id="totDaPagare">0</strong>
-        </div>
-        <div class="stat-item">
-          <span class="stat-label">Pagate</span>
-          <strong id="totPagate">0</strong>
-        </div>
-      </div>
-    </section>
+<p>Bollette • Autoletture • Archivio PDF</p>
 
-    <section id="utenze" class="section hidden">
-      <div class="card">
-        <h2>Nuova Utenza</h2>
+</header>
 
-        <div class="form-grid">
-          <input id="nomeUtenza" placeholder="Nome fornitore" />
-          <input id="tipoUtenza" placeholder="Tipo (luce, gas, acqua...)" />
-        </div>
+<nav>
 
-        <button class="primary" onclick="addUtenza()">Salva utenza</button>
-      </div>
+<button onclick="showSection('dashboard')">Dashboard</button>
 
-      <div class="card">
-        <h3>Elenco utenze</h3>
-        <ul id="listaUtenze" class="clean-list"></ul>
-      </div>
-    </section>
+<button onclick="showSection('utenze')">Utenze</button>
 
-    <section id="fatture" class="section hidden">
-      <div class="card">
-        <h2>Nuova Fattura</h2>
+<button onclick="showSection('fatture')">Fatture</button>
 
-        <div class="form-grid">
-          <input id="fornitore" placeholder="Fornitore" />
-          <input type="date" id="scadenza" />
-          <input id="importo" placeholder="Importo" />
-          <input id="numeroFattura" placeholder="Numero fattura" />
-          <input id="periodoFattura" placeholder="Periodo fattura" />
-          <input type="file" id="pdf" accept="application/pdf" />
-        </div>
+<button onclick="showSection('autoletture')">Autoletture</button>
 
-        <div class="button-row">
-          <button class="secondary" onclick="leggiPDF()">Importa dati da PDF</button>
-          <button class="primary" onclick="addFattura()">Salva fattura</button>
-        </div>
+<button onclick="showSection('archivio')">Archivio</button>
 
-        <p class="hint">
-          Carica un PDF testuale per tentare l’estrazione automatica di importo, scadenza,
-          numero e periodo.
-        </p>
-      </div>
-    </section>
+</nav>
 
-    <section id="archivio" class="section hidden">
-      <div class="card">
-        <h2>Archivio fatture</h2>
-        <ul id="listaFatture" class="clean-list"></ul>
-      </div>
-    </section>
-  </main>
+<section id="dashboard">
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-  <script src="app.js"></script>
+<h2>Scadenze</h2>
+
+<div id="scadenze"></div>
+
+<h2>Autoletture prossime</h2>
+
+<div id="autolettureProssime"></div>
+
+</section>
+
+<section id="utenze" class="hidden">
+
+<h2>Nuova Utenza</h2>
+
+<input id="nomeUtenza" placeholder="Nome fornitore">
+
+<input id="tipoUtenza" placeholder="Tipo (luce, gas, acqua)">
+
+<button onclick="addUtenza()">Salva</button>
+
+<ul id="listaUtenze"></ul>
+
+</section>
+
+<section id="fatture" class="hidden">
+
+<h2>Nuova Fattura</h2>
+
+<input id="fornitore" placeholder="Fornitore">
+
+<input type="date" id="scadenza">
+
+<input id="importo" placeholder="Importo">
+
+<input id="numeroFattura" placeholder="Numero fattura">
+
+<input type="file" id="pdf" accept="application/pdf">
+
+<button onclick="leggiPDF()">Importa dati da PDF</button>
+
+<button onclick="addFattura()">Salva fattura</button>
+
+</section>
+
+<section id="autoletture" class="hidden">
+
+<h2>Autolettura contatore</h2>
+
+<input id="contatore" placeholder="Contatore (gas, luce...)">
+
+<input type="date" id="dataAutolettura">
+
+<button onclick="addAutolettura()">Salva</button>
+
+<ul id="listaAutoletture"></ul>
+
+</section>
+
+<section id="archivio" class="hidden">
+
+<h2>Archivio fatture</h2>
+
+<ul id="listaFatture"></ul>
+
+</section>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
+<script src="app.js"></script>
+
 </body>
+
 </html>
