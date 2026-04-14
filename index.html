@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>Gestione Utenze</title>
+
+<link rel="stylesheet" href="style.css">
+
+</head>
+
+<body>
+
+<header>
+<h1>Gestione Utenze</h1>
+</header>
+
+<nav>
+
+<button onclick="showSection('dashboard')">Dashboard</button>
+
+<button onclick="showSection('utenze')">Utenze</button>
+
+<button onclick="showSection('fatture')">Fatture</button>
+
+<button onclick="showSection('archivio')">Archivio</button>
+
+</nav>
+
+<section id="dashboard">
+
+<h2>Scadenze</h2>
+
+<div id="scadenze"></div>
+
+</section>
+
+<section id="utenze" class="hidden">
+
+<h2>Nuova Utenza</h2>
+
+<input id="nomeUtenza" placeholder="Nome fornitore">
+
+<input id="tipoUtenza" placeholder="Tipo (luce, gas ecc)">
+
+<button onclick="addUtenza()">Salva</button>
+
+<h3>Elenco utenze</h3>
+
+<ul id="listaUtenze"></ul>
+
+</section>
+
+<section id="fatture" class="hidden">
+
+<h2>Nuova Fattura</h2>
+
+<input id="fornitore" placeholder="Fornitore">
+
+<input type="date" id="scadenza">
+
+<input id="importo" placeholder="Importo">
+
+<input type="file" id="pdf">
+
+<button onclick="addFattura()">Salva fattura</button>
+
+</section>
+
+<section id="archivio" class="hidden">
+
+<h2>Archivio fatture</h2>
+
+<ul id="listaFatture"></ul>
+
+</section>
+
+<script src="app.js"></script>
+
+</body>
+</html>
