@@ -10,6 +10,8 @@ let monthlyChart = null;
 
 async function initApp() {
   await initDB();
+  normalizeStoredData();
+  autoCreateUtilitiesFromInvoices();
   populateFilterOptions();
   renderUtenze();
   renderFatture();
@@ -24,6 +26,21 @@ async function initApp() {
   controllaENotificaScadenze(false);
 }
 
+function normalizeStoredData() {
+  fatture = fatture.map((f) => ({
+    rate: [],
+    rateizzata: false,
+    archiviata: false,
+    pagata: false,
+    ...f,
+    rate: Array.isArray(f.rate) ? f.rate : [],
+    rateizzata: !!f.rateizzata,
+    archiviata: !!f.archiviata,
+    pagata: !!f.pagata
+  }));
+  saveData();
+}
+
 function saveData() {
   localStorage.setItem("utenze", JSON.stringify(utenze));
   localStorage.setItem("fatture", JSON.stringify(fatture));
@@ -31,6 +48,7 @@ function saveData() {
 }
 
 function refreshAll() {
+  autoCreateUtilitiesFromInvoices();
   populateFilterOptions();
   renderUtenze();
   renderFatture();
@@ -48,6 +66,20 @@ function showSection(id) {
     section.classList.add("hidden");
   });
   document.getElementById(id).classList.remove("hidden");
+}
+
+function openArchiveFromDashboard(mode) {
+  resetFilters(false);
+
+  const filterStatus = document.getElementById("filterStatus");
+  if (mode === "pagata") filterStatus.value = "pagata";
+  if (mode === "dapagare") filterStatus.value = "dapagare";
+  if (mode === "archiviata") filterStatus.value = "archiviata";
+  if (mode === "rateizzata") filterStatus.value = "rateizzata";
+  if (mode === "rateizzatadaPagare") filterStatus.value = "rateizzatadaPagare";
+
+  showSection("archivio");
+  renderFatture();
 }
 
 function escapeHtml(value) {
@@ -81,9 +113,7 @@ function convertiDataPerInput(dataStr) {
 
   if (dataStr.includes("/")) {
     const parts = dataStr.split("/");
-    if (parts.length === 3) {
-      return `${parts[2]}-${parts[1]}-${parts[0]}`;
-    }
+    if (parts.length === 3) return `${parts[2]}-${parts[1]}-${parts[0]}`;
   }
 
   if (dataStr.includes("-")) {
@@ -111,10 +141,39 @@ function formatMoney(num) {
 function trovaMatch(testo, patterns, groupIndex = 1) {
   for (const pattern of patterns) {
     const match = testo.match(pattern);
-    if (match && match[groupIndex]) {
-      return match[groupIndex].trim();
+    if (match && match[groupIndex]) return match[groupIndex].trim();
+  }
+  return "";
+}
+
+function detectProvider(text, fileName = "") {
+  const source = `${text} ${fileName}`.toLowerCase();
+
+  const providerMap = [
+    { name: "Enel", patterns: ["enel", "enel energia", "enel mercato libero", "servizio elettrico nazionale"] },
+    { name: "Plenitude", patterns: ["eni plenitude", "plenitude", "eni gas e luce", "eni"] },
+    { name: "Acea", patterns: ["acea", "acea energia", "acea ato", "acea ambiente"] },
+    { name: "Fastweb", patterns: ["fastweb"] },
+    { name: "TIM", patterns: ["tim", "telecom italia"] },
+    { name: "Vodafone", patterns: ["vodafone"] },
+    { name: "Iliad", patterns: ["iliad"] },
+    { name: "WindTre", patterns: ["windtre", "wind tre", "wind"] },
+    { name: "Italgas", patterns: ["italgas"] },
+    { name: "A2A", patterns: ["a2a", "a2a energia"] },
+    { name: "Sorgenia", patterns: ["sorgenia"] },
+    { name: "Edison", patterns: ["edison", "edison energia"] },
+    { name: "Hera", patterns: ["hera", "gruppo hera"] },
+    { name: "Sky Wifi", patterns: ["sky wifi", "sky italia"] },
+    { name: "E-distribuzione", patterns: ["e-distribuzione", "edistribuzione"] },
+    { name: "Acquedotto", patterns: ["acquedotto", "servizio idrico", "idrico integrato"] }
+  ];
+
+  for (const provider of providerMap) {
+    if (provider.patterns.some((p) => source.includes(p))) {
+      return provider.name;
     }
   }
+
   return "";
 }
 
@@ -126,7 +185,8 @@ function riconosciTipoDaFornitore(nome) {
     valore.includes("servizio elettrico") ||
     valore.includes("a2a energia") ||
     valore.includes("sorgenia") ||
-    valore.includes("edison energia")
+    valore.includes("edison energia") ||
+    valore.includes("e-distribuzione")
   ) {
     return "Luce";
   }
@@ -143,7 +203,8 @@ function riconosciTipoDaFornitore(nome) {
   if (
     valore.includes("acea") ||
     valore.includes("acqua") ||
-    valore.includes("idrico")
+    valore.includes("idrico") ||
+    valore.includes("acquedotto")
   ) {
     return "Acqua";
   }
@@ -153,12 +214,42 @@ function riconosciTipoDaFornitore(nome) {
     valore.includes("vodafone") ||
     valore.includes("fastweb") ||
     valore.includes("wind") ||
-    valore.includes("iliad")
+    valore.includes("iliad") ||
+    valore.includes("sky wifi")
   ) {
     return "Telefono";
   }
 
   return "";
+}
+
+function utilityExists(nome, tipo) {
+  return utenze.some(
+    (u) =>
+      (u.nome || "").trim().toLowerCase() === (nome || "").trim().toLowerCase() &&
+      (u.tipo || "").trim().toLowerCase() === (tipo || "").trim().toLowerCase()
+  );
+}
+
+function autoCreateUtilitiesFromInvoices() {
+  let changed = false;
+
+  fatture.forEach((f) => {
+    const nome = (f.fornitore || "").trim();
+    const tipo = (f.tipoFattura || riconosciTipoDaFornitore(nome) || "Altro").trim();
+
+    if (nome && !utilityExists(nome, tipo)) {
+      utenze.push({
+        id: Date.now() + Math.floor(Math.random() * 100000),
+        nome,
+        tipo,
+        origin: "fattura"
+      });
+      changed = true;
+    }
+  });
+
+  if (changed) saveData();
 }
 
 function toggleRateFields() {
@@ -195,9 +286,7 @@ function addMonths(dateString, monthsToAdd) {
   const originalDay = d.getDate();
   d.setMonth(d.getMonth() + monthsToAdd);
 
-  if (d.getDate() < originalDay) {
-    d.setDate(0);
-  }
+  if (d.getDate() < originalDay) d.setDate(0);
 
   return d.toISOString().split("T")[0];
 }
@@ -206,10 +295,7 @@ function generaPianoRate(numeroRate, importoRata, primaScadenza, frequenza) {
   const rate = [];
   for (let i = 0; i < numeroRate; i++) {
     let dataRata = primaScadenza;
-
-    if (frequenza === "mensile") {
-      dataRata = addMonths(primaScadenza, i);
-    }
+    if (frequenza === "mensile") dataRata = addMonths(primaScadenza, i);
 
     rate.push({
       numero: i + 1,
@@ -230,10 +316,16 @@ function addUtenza() {
     return;
   }
 
+  if (utilityExists(nome, tipo)) {
+    alert("Questa utenza esiste già.");
+    return;
+  }
+
   utenze.push({
     id: Date.now(),
     nome,
-    tipo
+    tipo,
+    origin: "manuale"
   });
 
   saveData();
@@ -252,13 +344,18 @@ function renderUtenze() {
     return;
   }
 
-  utenze.forEach((u) => {
+  const utenzeOrdinate = [...utenze].sort((a, b) =>
+    `${a.nome} ${a.tipo}`.localeCompare(`${b.nome} ${b.tipo}`, "it")
+  );
+
+  utenzeOrdinate.forEach((u) => {
     const li = document.createElement("li");
     li.innerHTML = `
       <div class="bill-header">
         <div>
           <strong>${escapeHtml(u.nome)}</strong>
           <div class="small-text">Tipo: ${escapeHtml(u.tipo)}</div>
+          <div class="small-text">Origine: ${u.origin === "fattura" ? "Creata da fattura" : "Inserita manualmente"}</div>
         </div>
       </div>
     `;
@@ -319,10 +416,12 @@ async function addFattura() {
     ? generaPianoRate(numeroRate, parseMoney(importoRata), primaScadenzaRata, frequenzaRate)
     : [];
 
+  const tipoFinale = tipoFattura || riconosciTipoDaFornitore(fornitore) || "Altro";
+
   fatture.push({
     id,
     fornitore,
-    tipoFattura: tipoFattura || riconosciTipoDaFornitore(fornitore) || "",
+    tipoFattura: tipoFinale,
     scadenza,
     importo,
     numeroFattura,
@@ -344,6 +443,10 @@ async function addFattura() {
   clearFatturaForm();
 
   alert("Fattura salvata correttamente.");
+}
+
+function hasUnpaidInstallments(f) {
+  return Array.isArray(f.rate) && f.rate.some((r) => !r.pagata);
 }
 
 function getFilteredFatture() {
@@ -373,6 +476,7 @@ function getFilteredFatture() {
       if (filterStatus === "dapagare") matchesStatus = !f.pagata;
       if (filterStatus === "archiviata") matchesStatus = !!f.archiviata;
       if (filterStatus === "rateizzata") matchesStatus = !!f.rateizzata;
+      if (filterStatus === "rateizzatadaPagare") matchesStatus = !!f.rateizzata && hasUnpaidInstallments(f);
 
       return matchesSearch && matchesMonth && matchesYear && matchesTipo && matchesStatus;
     })
@@ -470,13 +574,13 @@ function applyFilters() {
   renderFatture();
 }
 
-function resetFilters() {
+function resetFilters(renderNow = true) {
   document.getElementById("searchText").value = "";
   document.getElementById("filterMonth").value = "";
   document.getElementById("filterYear").value = "";
   document.getElementById("filterTipo").value = "";
   document.getElementById("filterStatus").value = "";
-  renderFatture();
+  if (renderNow) renderFatture();
 }
 
 function populateFilterOptions() {
@@ -526,9 +630,7 @@ function renderMonthlyChart() {
   const labels = Object.keys(map).sort();
   const values = labels.map((k) => Number(formatMoney(map[k])));
 
-  if (monthlyChart) {
-    monthlyChart.destroy();
-  }
+  if (monthlyChart) monthlyChart.destroy();
 
   monthlyChart = new Chart(canvas, {
     type: "bar",
@@ -544,14 +646,10 @@ function renderMonthlyChart() {
     options: {
       responsive: true,
       plugins: {
-        legend: {
-          display: true
-        }
+        legend: { display: true }
       },
       scales: {
-        y: {
-          beginAtZero: true
-        }
+        y: { beginAtZero: true }
       }
     }
   });
@@ -573,11 +671,7 @@ function segnaRataPagata(fatturaIndex, rataIndex) {
   if (!fattura || !Array.isArray(fattura.rate)) return;
 
   fattura.rate[rataIndex].pagata = true;
-
-  const tuttePagate = fattura.rate.every((r) => r.pagata);
-  if (tuttePagate) {
-    fattura.pagata = true;
-  }
+  if (fattura.rate.every((r) => r.pagata)) fattura.pagata = true;
 
   saveData();
   refreshAll();
@@ -594,9 +688,7 @@ async function deleteFattura(index) {
   if (!conferma) return;
 
   const item = fatture[index];
-  if (item?.id) {
-    await deletePdfFromDB(item.id);
-  }
+  if (item?.id) await deletePdfFromDB(item.id);
 
   fatture.splice(index, 1);
   saveData();
@@ -620,13 +712,9 @@ function renderScadenze() {
 
   prossime.forEach((f) => {
     let testoGiorni = "";
-    if (f.diffGiorni < 0) {
-      testoGiorni = `Scaduta da ${Math.abs(f.diffGiorni)} giorni`;
-    } else if (f.diffGiorni === 0) {
-      testoGiorni = "Scade oggi";
-    } else {
-      testoGiorni = `Scade tra ${f.diffGiorni} giorni`;
-    }
+    if (f.diffGiorni < 0) testoGiorni = `Scaduta da ${Math.abs(f.diffGiorni)} giorni`;
+    else if (f.diffGiorni === 0) testoGiorni = "Scade oggi";
+    else testoGiorni = `Scade tra ${f.diffGiorni} giorni`;
 
     const item = document.createElement("div");
     item.className = "alert-item";
@@ -682,13 +770,9 @@ function renderRateProssime() {
 
   rate.forEach((r) => {
     let testo = "";
-    if (r.diffGiorni < 0) {
-      testo = `Scaduta da ${Math.abs(r.diffGiorni)} giorni`;
-    } else if (r.diffGiorni === 0) {
-      testo = "Scade oggi";
-    } else {
-      testo = `Scade tra ${r.diffGiorni} giorni`;
-    }
+    if (r.diffGiorni < 0) testo = `Scaduta da ${Math.abs(r.diffGiorni)} giorni`;
+    else if (r.diffGiorni === 0) testo = "Scade oggi";
+    else testo = `Scade tra ${r.diffGiorni} giorni`;
 
     const item = document.createElement("div");
     item.className = "info-item";
@@ -769,13 +853,9 @@ function renderAutolettureProssime() {
 
   lista.forEach((a) => {
     let testo = "";
-    if (a.diffGiorni < 0) {
-      testo = `In ritardo di ${Math.abs(a.diffGiorni)} giorni`;
-    } else if (a.diffGiorni === 0) {
-      testo = "Da fare oggi";
-    } else {
-      testo = `Da fare tra ${a.diffGiorni} giorni`;
-    }
+    if (a.diffGiorni < 0) testo = `In ritardo di ${Math.abs(a.diffGiorni)} giorni`;
+    else if (a.diffGiorni === 0) testo = "Da fare oggi";
+    else testo = `Da fare tra ${a.diffGiorni} giorni`;
 
     const item = document.createElement("div");
     item.className = "info-item";
@@ -814,47 +894,20 @@ function raccogliNotifiche() {
   fatture.forEach((f) => {
     if (!f.pagata) {
       const diff = daysDiffFromToday(f.scadenza);
-      if (diff < 0) {
-        notifiche.push({
-          tipo: "danger",
-          testo: `${f.fornitore}: bolletta scaduta da ${Math.abs(diff)} giorni`
-        });
-      } else if (diff <= 3) {
-        notifiche.push({
-          tipo: "info",
-          testo: `${f.fornitore}: bolletta in scadenza il ${formatDate(f.scadenza)}`
-        });
-      }
+      if (diff < 0) notifiche.push({ tipo: "danger", testo: `${f.fornitore}: bolletta scaduta da ${Math.abs(diff)} giorni` });
+      else if (diff <= 3) notifiche.push({ tipo: "info", testo: `${f.fornitore}: bolletta in scadenza il ${formatDate(f.scadenza)}` });
     }
   });
 
   getAllUnpaidInstallments().forEach((r) => {
-    if (r.diffGiorni < 0) {
-      notifiche.push({
-        tipo: "danger",
-        testo: `${r.fornitore}: rata ${r.numeroRata} scaduta da ${Math.abs(r.diffGiorni)} giorni`
-      });
-    } else if (r.diffGiorni <= 3) {
-      notifiche.push({
-        tipo: "info",
-        testo: `${r.fornitore}: rata ${r.numeroRata} in scadenza il ${formatDate(r.scadenza)}`
-      });
-    }
+    if (r.diffGiorni < 0) notifiche.push({ tipo: "danger", testo: `${r.fornitore}: rata ${r.numeroRata} scaduta da ${Math.abs(r.diffGiorni)} giorni` });
+    else if (r.diffGiorni <= 3) notifiche.push({ tipo: "info", testo: `${r.fornitore}: rata ${r.numeroRata} in scadenza il ${formatDate(r.scadenza)}` });
   });
 
   autoletture.forEach((a) => {
     const diff = daysDiffFromToday(a.data);
-    if (diff < 0) {
-      notifiche.push({
-        tipo: "danger",
-        testo: `${a.contatore}: autolettura in ritardo di ${Math.abs(diff)} giorni`
-      });
-    } else if (diff <= 2) {
-      notifiche.push({
-        tipo: "info",
-        testo: `${a.contatore}: autolettura da fare il ${formatDate(a.data)}`
-      });
-    }
+    if (diff < 0) notifiche.push({ tipo: "danger", testo: `${a.contatore}: autolettura in ritardo di ${Math.abs(diff)} giorni` });
+    else if (diff <= 2) notifiche.push({ tipo: "info", testo: `${a.contatore}: autolettura da fare il ${formatDate(a.data)}` });
   });
 
   return notifiche;
@@ -895,14 +948,14 @@ async function leggiPDF() {
       testoCompleto += " " + content.items.map((item) => item.str).join(" ");
     }
 
-    analizzaTestoPDF(testoCompleto);
+    analizzaTestoPDF(testoCompleto, file.name);
   } catch (error) {
     console.error("Errore lettura PDF:", error);
     alert("Non sono riuscito a leggere questo PDF. Prova con un PDF testuale.");
   }
 }
 
-function analizzaTestoPDF(testo) {
+function analizzaTestoPDF(testo, fileName = "") {
   const testoPulito = testo.replace(/\s+/g, " ").trim();
 
   const importoPatterns = [
@@ -930,65 +983,27 @@ function analizzaTestoPDF(testo) {
     /dal\s*([0-9]{2}\/[0-9]{2}\/[0-9]{4})\s*al\s*([0-9]{2}\/[0-9]{2}\/[0-9]{4})/i
   ];
 
-  const fornitori = [
-    "Enel",
-    "Eni",
-    "Plenitude",
-    "Acea",
-    "Fastweb",
-    "Tim",
-    "Vodafone",
-    "Iliad",
-    "Italgas",
-    "A2A",
-    "Sorgenia",
-    "Edison",
-    "Hera"
-  ];
-
   let importo = trovaMatch(testoPulito, importoPatterns, 1);
   let scadenza = trovaMatch(testoPulito, scadenzaPatterns, 1);
   let numeroFattura = trovaMatch(testoPulito, numeroPatterns, 1);
   let periodo = "";
-  let fornitore = "";
+  let fornitore = detectProvider(testoPulito, fileName);
 
   for (const pattern of periodoPatterns) {
     const match = testoPulito.match(pattern);
     if (match) {
-      if (match.length >= 3 && pattern.toString().includes("dal")) {
-        periodo = `${match[1]} - ${match[2]}`;
-      } else {
-        periodo = match[1];
-      }
+      if (match.length >= 3 && pattern.toString().includes("dal")) periodo = `${match[1]} - ${match[2]}`;
+      else periodo = match[1];
       break;
     }
   }
 
-  for (const nome of fornitori) {
-    const regex = new RegExp(nome, "i");
-    if (regex.test(testoPulito)) {
-      fornitore = nome;
-      break;
-    }
-  }
+  if (importo) document.getElementById("importo").value = importo.replace(",", ".");
+  if (scadenza) document.getElementById("scadenza").value = convertiDataPerInput(scadenza);
+  if (numeroFattura) document.getElementById("numeroFattura").value = numeroFattura;
+  if (periodo) document.getElementById("periodoFattura").value = periodo;
 
-  if (importo) {
-    document.getElementById("importo").value = importo.replace(",", ".");
-  }
-
-  if (scadenza) {
-    document.getElementById("scadenza").value = convertiDataPerInput(scadenza);
-  }
-
-  if (numeroFattura) {
-    document.getElementById("numeroFattura").value = numeroFattura;
-  }
-
-  if (periodo) {
-    document.getElementById("periodoFattura").value = periodo;
-  }
-
-  if (fornitore && !document.getElementById("fornitore").value.trim()) {
+  if (fornitore) {
     document.getElementById("fornitore").value = fornitore;
   }
 
@@ -1030,11 +1045,7 @@ function savePdfToDB(id, file) {
 
     const transaction = db.transaction([PDF_STORE], "readwrite");
     const store = transaction.objectStore(PDF_STORE);
-
-    const request = store.put({
-      id,
-      file
-    });
+    const request = store.put({ id, file });
 
     request.onsuccess = () => resolve(true);
     request.onerror = () => reject(request.error);
@@ -1153,20 +1164,15 @@ async function richiediPermessoNotifiche() {
 
   const permission = await Notification.requestPermission();
 
-  if (permission === "granted") {
-    alert("Notifiche browser attivate.");
-  } else {
-    alert("Permesso notifiche non concesso.");
-  }
+  if (permission === "granted") alert("Notifiche browser attivate.");
+  else alert("Permesso notifiche non concesso.");
 }
 
 function inviaNotificaBrowser(titolo, corpo) {
   if (!("Notification" in window)) return;
   if (Notification.permission !== "granted") return;
 
-  new Notification(titolo, {
-    body: corpo
-  });
+  new Notification(titolo, { body: corpo });
 }
 
 function controllaENotificaScadenze(forzaManuale = false) {
