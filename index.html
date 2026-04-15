@@ -5,13 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Gestione Utenze</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#005195" />
 </head>
 <body>
   <header class="topbar">
     <div class="topbar-inner">
       <div>
         <h1>Gestione Utenze</h1>
-        <p class="subtitle">Bollette, autoletture, scadenze e archivio PDF</p>
+        <p class="subtitle">Bollette, rateizzazioni, autoletture, notifiche, grafici e archivio PDF</p>
       </div>
     </div>
   </header>
@@ -22,20 +24,42 @@
     <button onclick="showSection('fatture')">Fatture</button>
     <button onclick="showSection('autoletture')">Autoletture</button>
     <button onclick="showSection('archivio')">Archivio</button>
+    <button onclick="showSection('backup')">Backup</button>
   </nav>
 
   <main class="container">
     <section id="dashboard" class="section">
       <div class="grid-two">
         <div class="card">
-          <h2>Scadenze vicine</h2>
+          <h2>Scadenze bollette vicine</h2>
           <div id="scadenze" class="list-box"></div>
         </div>
 
         <div class="card">
+          <h2>Rate imminenti</h2>
+          <div id="rateProssime" class="list-box"></div>
+        </div>
+      </div>
+
+      <div class="grid-two">
+        <div class="card">
           <h2>Autoletture prossime</h2>
           <div id="autolettureProssime" class="list-box"></div>
         </div>
+
+        <div class="card">
+          <h2>Notifiche</h2>
+          <div id="notificheBox" class="list-box"></div>
+          <div class="button-row top-gap">
+            <button class="secondary" onclick="richiediPermessoNotifiche()">Attiva notifiche browser</button>
+            <button class="secondary" onclick="controllaENotificaScadenze(true)">Controlla notifiche adesso</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Spese mensili</h2>
+        <canvas id="monthlyChart" height="120"></canvas>
       </div>
 
       <div class="card stats-grid">
@@ -52,8 +76,16 @@
           <strong id="totPagate">0</strong>
         </div>
         <div class="stat-item">
-          <span class="stat-label">Archiviata</span>
+          <span class="stat-label">Archiviate</span>
           <strong id="totArchiviate">0</strong>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Totale rate</span>
+          <strong id="totRate">0</strong>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Rate da pagare</span>
+          <strong id="totRateDaPagare">0</strong>
         </div>
       </div>
     </section>
@@ -102,10 +134,26 @@
             <option value="Altro">Altro</option>
           </select>
           <input type="date" id="scadenza" />
-          <input id="importo" placeholder="Importo" />
+          <input id="importo" placeholder="Importo totale" />
           <input id="numeroFattura" placeholder="Numero fattura" />
           <input id="periodoFattura" placeholder="Periodo fattura" />
           <input type="file" id="pdf" accept="application/pdf" />
+        </div>
+
+        <div class="rate-box">
+          <label class="checkbox-line">
+            <input type="checkbox" id="rateizzata" onchange="toggleRateFields()" />
+            Questa bolletta è rateizzata
+          </label>
+
+          <div id="rateFields" class="form-grid hidden">
+            <input id="numeroRate" type="number" min="2" placeholder="Numero rate" />
+            <input id="importoRata" placeholder="Importo singola rata (opzionale)" />
+            <input id="primaScadenzaRata" type="date" />
+            <select id="frequenzaRate">
+              <option value="mensile">Mensile</option>
+            </select>
+          </div>
         </div>
 
         <div class="button-row">
@@ -114,7 +162,7 @@
         </div>
 
         <p class="hint">
-          L’app prova a riconoscere automaticamente il fornitore e i dati principali dalla bolletta PDF.
+          Se lasci vuoto l’importo rata, l’app lo calcola automaticamente dividendo il totale per il numero di rate.
         </p>
       </div>
     </section>
@@ -148,12 +196,79 @@
     <section id="archivio" class="section hidden">
       <div class="card">
         <h2>Archivio fatture</h2>
+
+        <div class="filter-grid">
+          <input id="searchText" placeholder="Cerca fornitore o numero fattura" oninput="applyFilters()" />
+
+          <select id="filterMonth" onchange="applyFilters()">
+            <option value="">Tutti i mesi</option>
+          </select>
+
+          <select id="filterYear" onchange="applyFilters()">
+            <option value="">Tutti gli anni</option>
+          </select>
+
+          <select id="filterTipo" onchange="applyFilters()">
+            <option value="">Tutti i tipi</option>
+            <option value="Luce">Luce</option>
+            <option value="Gas">Gas</option>
+            <option value="Acqua">Acqua</option>
+            <option value="Internet">Internet</option>
+            <option value="Telefono">Telefono</option>
+            <option value="Rifiuti">Rifiuti</option>
+            <option value="Altro">Altro</option>
+          </select>
+
+          <select id="filterStatus" onchange="applyFilters()">
+            <option value="">Tutti gli stati</option>
+            <option value="pagata">Pagata</option>
+            <option value="dapagare">Da pagare</option>
+            <option value="archiviata">Archiviata</option>
+            <option value="rateizzata">Rateizzata</option>
+          </select>
+
+          <button class="secondary" onclick="resetFilters()">Reset filtri</button>
+        </div>
+
+        <div class="summary-strip">
+          <div><strong>Fatture trovate:</strong> <span id="filteredCount">0</span></div>
+          <div><strong>Totale importi:</strong> € <span id="filteredTotal">0.00</span></div>
+        </div>
+
         <ul id="listaFatture" class="clean-list"></ul>
+      </div>
+    </section>
+
+    <section id="backup" class="section hidden">
+      <div class="grid-two">
+        <div class="card">
+          <h2>Esporta backup</h2>
+          <p class="hint">Esporta tutti i dati dell'app in un file JSON.</p>
+          <button class="primary" onclick="esportaBackup()">Scarica backup JSON</button>
+        </div>
+
+        <div class="card">
+          <h2>Importa backup</h2>
+          <p class="hint">Importa un file JSON salvato in precedenza.</p>
+          <input type="file" id="backupFile" accept="application/json" />
+          <div class="button-row top-gap">
+            <button class="secondary" onclick="importaBackup()">Importa backup</button>
+          </div>
+        </div>
       </div>
     </section>
   </main>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="app.js"></script>
+
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("service-worker.js")
+        .then(() => console.log("Service Worker registrato"))
+        .catch((err) => console.log("Errore SW:", err));
+    }
+  </script>
 </body>
 </html>
