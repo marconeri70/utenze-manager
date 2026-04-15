@@ -62,28 +62,50 @@
         <canvas id="monthlyChart" height="120"></canvas>
       </div>
 
+      <div class="dashboard-links">
+        <button class="dashboard-link-card" onclick="showSection('utenze')">
+          <span class="dash-link-title">Vai a Utenze</span>
+          <span class="dash-link-text">Visualizza e gestisci i fornitori salvati</span>
+        </button>
+
+        <button class="dashboard-link-card" onclick="showSection('fatture')">
+          <span class="dash-link-title">Vai a Fatture</span>
+          <span class="dash-link-text">Inserisci una nuova bolletta o importa un PDF</span>
+        </button>
+
+        <button class="dashboard-link-card" onclick="showSection('autoletture')">
+          <span class="dash-link-title">Vai a Autoletture</span>
+          <span class="dash-link-text">Controlla e aggiungi letture contatori</span>
+        </button>
+
+        <button class="dashboard-link-card" onclick="showSection('archivio')">
+          <span class="dash-link-title">Vai a Archivio</span>
+          <span class="dash-link-text">Apri, filtra e consulta tutte le fatture</span>
+        </button>
+      </div>
+
       <div class="card stats-grid">
-        <div class="stat-item">
+        <div class="stat-item clickable-stat" onclick="showSection('archivio')">
           <span class="stat-label">Totale fatture</span>
           <strong id="totFatture">0</strong>
         </div>
-        <div class="stat-item">
+        <div class="stat-item clickable-stat" onclick="showSection('archivio')">
           <span class="stat-label">Da pagare</span>
           <strong id="totDaPagare">0</strong>
         </div>
-        <div class="stat-item">
+        <div class="stat-item clickable-stat" onclick="showSection('archivio')">
           <span class="stat-label">Pagate</span>
           <strong id="totPagate">0</strong>
         </div>
-        <div class="stat-item">
+        <div class="stat-item clickable-stat" onclick="showSection('archivio')">
           <span class="stat-label">Archiviate</span>
           <strong id="totArchiviate">0</strong>
         </div>
-        <div class="stat-item">
+        <div class="stat-item clickable-stat" onclick="showSection('archivio')">
           <span class="stat-label">Totale rate</span>
           <strong id="totRate">0</strong>
         </div>
-        <div class="stat-item">
+        <div class="stat-item clickable-stat" onclick="showSection('archivio')">
           <span class="stat-label">Rate da pagare</span>
           <strong id="totRateDaPagare">0</strong>
         </div>
