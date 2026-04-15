@@ -13,7 +13,7 @@
     <div class="topbar-inner">
       <div>
         <h1>Gestione Utenze</h1>
-        <p class="subtitle">Bollette, rateizzazioni, autoletture, notifiche, grafici e archivio PDF</p>
+        <p class="subtitle">Bollette, rate, autoletture, notifiche, grafici e archivio PDF</p>
       </div>
     </div>
   </header>
@@ -57,9 +57,16 @@
         </div>
       </div>
 
-      <div class="card">
-        <h2>Spese mensili</h2>
-        <canvas id="monthlyChart" height="120"></canvas>
+      <div class="grid-two">
+        <div class="card">
+          <h2>Spese mensili totali</h2>
+          <canvas id="monthlyChart" height="120"></canvas>
+        </div>
+
+        <div class="card">
+          <h2>Spese per tipo utenza</h2>
+          <canvas id="utilityTypeChart" height="120"></canvas>
+        </div>
       </div>
 
       <div class="card stats-grid clickable-stats">
@@ -167,7 +174,7 @@
         </div>
 
         <p class="hint">
-          Se lasci vuoto l’importo rata, l’app lo calcola automaticamente dividendo il totale per il numero di rate.
+          L’app prova a riconoscere gestore e tipo utenza dal PDF. Se lasci vuoto l’importo rata, lo calcola automaticamente.
         </p>
       </div>
     </section>
