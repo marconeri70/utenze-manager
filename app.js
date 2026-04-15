@@ -7,6 +7,7 @@ const DB_VERSION = 1;
 const PDF_STORE = "pdfFiles";
 let db = null;
 let monthlyChart = null;
+let utilityTypeChart = null;
 
 async function initApp() {
   await initDB();
@@ -22,22 +23,34 @@ async function initApp() {
   renderNotifiche();
   renderStats();
   renderMonthlyChart();
+  renderUtilityTypeChart();
   showSection("dashboard");
   controllaENotificaScadenze(false);
 }
 
 function normalizeStoredData() {
-  fatture = fatture.map((f) => ({
-    rate: [],
-    rateizzata: false,
-    archiviata: false,
-    pagata: false,
-    ...f,
-    rate: Array.isArray(f.rate) ? f.rate : [],
-    rateizzata: !!f.rateizzata,
-    archiviata: !!f.archiviata,
-    pagata: !!f.pagata
-  }));
+  fatture = fatture.map((f) => {
+    const text = `${f.fornitore || ""} ${f.numeroFattura || ""} ${f.periodoFattura || ""}`;
+    const inferredType =
+      f.tipoFattura ||
+      detectUtilityType(text) ||
+      riconosciTipoDaFornitore(f.fornitore || "") ||
+      "Altro";
+
+    return {
+      rate: [],
+      rateizzata: false,
+      archiviata: false,
+      pagata: false,
+      ...f,
+      tipoFattura: inferredType,
+      rate: Array.isArray(f.rate) ? f.rate : [],
+      rateizzata: !!f.rateizzata,
+      archiviata: !!f.archiviata,
+      pagata: !!f.pagata
+    };
+  });
+
   saveData();
 }
 
@@ -59,6 +72,7 @@ function refreshAll() {
   renderNotifiche();
   renderStats();
   renderMonthlyChart();
+  renderUtilityTypeChart();
 }
 
 function showSection(id) {
@@ -146,6 +160,28 @@ function trovaMatch(testo, patterns, groupIndex = 1) {
   return "";
 }
 
+function getProviderIcon(name) {
+  const n = (name || "").toLowerCase();
+
+  if (n.includes("enel")) return "⚡";
+  if (n.includes("plenitude") || n.includes("eni")) return "🔥";
+  if (n.includes("acea") || n.includes("acqua") || n.includes("acquedotto")) return "💧";
+  if (n.includes("fastweb")) return "🌐";
+  if (n.includes("tim") || n.includes("telecom")) return "📞";
+  if (n.includes("vodafone")) return "📶";
+  if (n.includes("iliad")) return "📱";
+  if (n.includes("wind")) return "📡";
+  if (n.includes("italgas")) return "🔥";
+  if (n.includes("a2a")) return "⚡";
+  if (n.includes("sorgenia")) return "⚡";
+  if (n.includes("edison")) return "💡";
+  if (n.includes("hera")) return "🏠";
+  if (n.includes("sky")) return "📺";
+  if (n.includes("rifiuti") || n.includes("ambiente")) return "♻️";
+
+  return "🏢";
+}
+
 function detectProvider(text, fileName = "") {
   const source = `${text} ${fileName}`.toLowerCase();
 
@@ -165,13 +201,82 @@ function detectProvider(text, fileName = "") {
     { name: "Hera", patterns: ["hera", "gruppo hera"] },
     { name: "Sky Wifi", patterns: ["sky wifi", "sky italia"] },
     { name: "E-distribuzione", patterns: ["e-distribuzione", "edistribuzione"] },
-    { name: "Acquedotto", patterns: ["acquedotto", "servizio idrico", "idrico integrato"] }
+    { name: "Acquedotto", patterns: ["acquedotto", "servizio idrico", "idrico integrato"] },
+    { name: "Rifiuti", patterns: ["tari", "rifiuti", "igiene urbana", "raccolta rifiuti", "ambiente"] }
   ];
 
   for (const provider of providerMap) {
     if (provider.patterns.some((p) => source.includes(p))) {
       return provider.name;
     }
+  }
+
+  return "";
+}
+
+function detectUtilityType(text) {
+  const source = (text || "").toLowerCase();
+
+  if (
+    source.includes("pod") ||
+    source.includes("energia elettrica") ||
+    source.includes("fornitura elettrica") ||
+    source.includes("kwh") ||
+    source.includes("elettric") ||
+    source.includes("luce") ||
+    source.includes("contatore elettrico")
+  ) {
+    return "Luce";
+  }
+
+  if (
+    source.includes("pdr") ||
+    source.includes("smc") ||
+    source.includes("standard metri cubi") ||
+    source.includes("gas naturale") ||
+    source.includes("metano") ||
+    source.includes("gas")
+  ) {
+    return "Gas";
+  }
+
+  if (
+    source.includes("mc acqua") ||
+    source.includes("servizio idrico") ||
+    source.includes("idrico") ||
+    source.includes("acqua") ||
+    source.includes("acquedotto")
+  ) {
+    return "Acqua";
+  }
+
+  if (
+    source.includes("fibra") ||
+    source.includes("internet") ||
+    source.includes("adsl") ||
+    source.includes("fttc") ||
+    source.includes("ftth") ||
+    source.includes("banda larga")
+  ) {
+    return "Internet";
+  }
+
+  if (
+    source.includes("telefono") ||
+    source.includes("mobile") ||
+    source.includes("sim") ||
+    source.includes("voce") ||
+    source.includes("telefonia")
+  ) {
+    return "Telefono";
+  }
+
+  if (
+    source.includes("tari") ||
+    source.includes("rifiuti") ||
+    source.includes("igiene urbana")
+  ) {
+    return "Rifiuti";
   }
 
   return "";
@@ -209,15 +314,26 @@ function riconosciTipoDaFornitore(nome) {
     return "Acqua";
   }
 
+  if (valore.includes("fastweb") || valore.includes("sky wifi")) {
+    return "Internet";
+  }
+
   if (
     valore.includes("tim") ||
     valore.includes("vodafone") ||
-    valore.includes("fastweb") ||
     valore.includes("wind") ||
     valore.includes("iliad") ||
-    valore.includes("sky wifi")
+    valore.includes("telecom")
   ) {
     return "Telefono";
+  }
+
+  if (
+    valore.includes("rifiuti") ||
+    valore.includes("ambiente") ||
+    valore.includes("tari")
+  ) {
+    return "Rifiuti";
   }
 
   return "";
@@ -349,13 +465,17 @@ function renderUtenze() {
   );
 
   utenzeOrdinate.forEach((u) => {
+    const icon = getProviderIcon(u.nome);
     const li = document.createElement("li");
     li.innerHTML = `
       <div class="bill-header">
-        <div>
-          <strong>${escapeHtml(u.nome)}</strong>
-          <div class="small-text">Tipo: ${escapeHtml(u.tipo)}</div>
-          <div class="small-text">Origine: ${u.origin === "fattura" ? "Creata da fattura" : "Inserita manualmente"}</div>
+        <div class="provider-inline">
+          <span class="provider-icon">${icon}</span>
+          <div>
+            <strong>${escapeHtml(u.nome)}</strong>
+            <div class="small-text">Tipo: ${escapeHtml(u.tipo)}</div>
+            <div class="small-text">Origine: ${u.origin === "fattura" ? "Creata da fattura" : "Inserita manualmente"}</div>
+          </div>
         </div>
       </div>
     `;
@@ -412,11 +532,15 @@ async function addFattura() {
     };
   }
 
+  const tipoFinale =
+    tipoFattura ||
+    detectUtilityType(`${fornitore} ${numeroFattura} ${periodoFattura}`) ||
+    riconosciTipoDaFornitore(fornitore) ||
+    "Altro";
+
   const rate = rateizzata
     ? generaPianoRate(numeroRate, parseMoney(importoRata), primaScadenzaRata, frequenzaRate)
     : [];
-
-  const tipoFinale = tipoFattura || riconosciTipoDaFornitore(fornitore) || "Altro";
 
   fatture.push({
     id,
@@ -505,6 +629,7 @@ function renderFatture() {
     const badgeClass = f.pagata ? "paid" : "pending";
     const badgeArchivio = f.archiviata ? `<span class="badge archived">Archiviata</span>` : "";
     const badgeRate = f.rateizzata ? `<span class="badge installment">Rateizzata</span>` : "";
+    const icon = getProviderIcon(f.fornitore);
 
     const rateHtml = f.rateizzata && Array.isArray(f.rate)
       ? `
@@ -528,10 +653,13 @@ function renderFatture() {
     const li = document.createElement("li");
     li.innerHTML = `
       <div class="bill-header">
-        <div>
-          <strong>${escapeHtml(f.fornitore)}</strong>
-          <div class="small-text">Tipo: ${escapeHtml(f.tipoFattura || "-")}</div>
-          <div class="small-text">Scadenza: ${formatDate(f.scadenza)}</div>
+        <div class="provider-inline">
+          <span class="provider-icon">${icon}</span>
+          <div>
+            <strong>${escapeHtml(f.fornitore)}</strong>
+            <div class="small-text">Tipo: ${escapeHtml(f.tipoFattura || "-")}</div>
+            <div class="small-text">Scadenza: ${formatDate(f.scadenza)}</div>
+          </div>
         </div>
         <div>
           <span class="badge ${badgeClass}">${stato}</span>
@@ -650,6 +778,51 @@ function renderMonthlyChart() {
       },
       scales: {
         y: { beginAtZero: true }
+      }
+    }
+  });
+}
+
+function renderUtilityTypeChart() {
+  const canvas = document.getElementById("utilityTypeChart");
+  if (!canvas || typeof Chart === "undefined") return;
+
+  const map = {
+    Luce: 0,
+    Gas: 0,
+    Acqua: 0,
+    Internet: 0,
+    Telefono: 0,
+    Rifiuti: 0,
+    Altro: 0
+  };
+
+  fatture.forEach((f) => {
+    const tipo = f.tipoFattura || "Altro";
+    if (!Object.prototype.hasOwnProperty.call(map, tipo)) map[tipo] = 0;
+    map[tipo] += parseMoney(f.importo);
+  });
+
+  const labels = Object.keys(map);
+  const values = labels.map((k) => Number(formatMoney(map[k])));
+
+  if (utilityTypeChart) utilityTypeChart.destroy();
+
+  utilityTypeChart = new Chart(canvas, {
+    type: "doughnut",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: "Spese per tipo",
+          data: values
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { position: "bottom" }
       }
     }
   });
@@ -988,12 +1161,18 @@ function analizzaTestoPDF(testo, fileName = "") {
   let numeroFattura = trovaMatch(testoPulito, numeroPatterns, 1);
   let periodo = "";
   let fornitore = detectProvider(testoPulito, fileName);
+  let tipoUtenza =
+    detectUtilityType(`${testoPulito} ${fileName} ${fornitore}`) ||
+    riconosciTipoDaFornitore(fornitore);
 
   for (const pattern of periodoPatterns) {
     const match = testoPulito.match(pattern);
     if (match) {
-      if (match.length >= 3 && pattern.toString().includes("dal")) periodo = `${match[1]} - ${match[2]}`;
-      else periodo = match[1];
+      if (match.length >= 3 && pattern.toString().includes("dal")) {
+        periodo = `${match[1]} - ${match[2]}`;
+      } else {
+        periodo = match[1];
+      }
       break;
     }
   }
@@ -1002,16 +1181,8 @@ function analizzaTestoPDF(testo, fileName = "") {
   if (scadenza) document.getElementById("scadenza").value = convertiDataPerInput(scadenza);
   if (numeroFattura) document.getElementById("numeroFattura").value = numeroFattura;
   if (periodo) document.getElementById("periodoFattura").value = periodo;
-
-  if (fornitore) {
-    document.getElementById("fornitore").value = fornitore;
-  }
-
-  const nomeFornitore = document.getElementById("fornitore").value.trim() || fornitore;
-  const tipoRiconosciuto = riconosciTipoDaFornitore(nomeFornitore);
-  if (tipoRiconosciuto && !document.getElementById("tipoFattura").value) {
-    document.getElementById("tipoFattura").value = tipoRiconosciuto;
-  }
+  if (fornitore) document.getElementById("fornitore").value = fornitore;
+  if (tipoUtenza) document.getElementById("tipoFattura").value = tipoUtenza;
 
   alert("Analisi PDF completata. Controlla i dati trovati prima di salvare.");
 }
