@@ -62,53 +62,36 @@
         <canvas id="monthlyChart" height="120"></canvas>
       </div>
 
-      <div class="dashboard-links">
-        <button class="dashboard-link-card" onclick="showSection('utenze')">
-          <span class="dash-link-title">Vai a Utenze</span>
-          <span class="dash-link-text">Visualizza e gestisci i fornitori salvati</span>
-        </button>
-
-        <button class="dashboard-link-card" onclick="showSection('fatture')">
-          <span class="dash-link-title">Vai a Fatture</span>
-          <span class="dash-link-text">Inserisci una nuova bolletta o importa un PDF</span>
-        </button>
-
-        <button class="dashboard-link-card" onclick="showSection('autoletture')">
-          <span class="dash-link-title">Vai a Autoletture</span>
-          <span class="dash-link-text">Controlla e aggiungi letture contatori</span>
-        </button>
-
-        <button class="dashboard-link-card" onclick="showSection('archivio')">
-          <span class="dash-link-title">Vai a Archivio</span>
-          <span class="dash-link-text">Apri, filtra e consulta tutte le fatture</span>
-        </button>
-      </div>
-
-      <div class="card stats-grid">
-        <div class="stat-item clickable-stat" onclick="showSection('archivio')">
+      <div class="card stats-grid clickable-stats">
+        <button class="stat-item stat-button" onclick="openArchiveFromDashboard('all')">
           <span class="stat-label">Totale fatture</span>
           <strong id="totFatture">0</strong>
-        </div>
-        <div class="stat-item clickable-stat" onclick="showSection('archivio')">
+        </button>
+
+        <button class="stat-item stat-button" onclick="openArchiveFromDashboard('dapagare')">
           <span class="stat-label">Da pagare</span>
           <strong id="totDaPagare">0</strong>
-        </div>
-        <div class="stat-item clickable-stat" onclick="showSection('archivio')">
+        </button>
+
+        <button class="stat-item stat-button" onclick="openArchiveFromDashboard('pagata')">
           <span class="stat-label">Pagate</span>
           <strong id="totPagate">0</strong>
-        </div>
-        <div class="stat-item clickable-stat" onclick="showSection('archivio')">
+        </button>
+
+        <button class="stat-item stat-button" onclick="openArchiveFromDashboard('archiviata')">
           <span class="stat-label">Archiviate</span>
           <strong id="totArchiviate">0</strong>
-        </div>
-        <div class="stat-item clickable-stat" onclick="showSection('archivio')">
+        </button>
+
+        <button class="stat-item stat-button" onclick="openArchiveFromDashboard('rateizzata')">
           <span class="stat-label">Totale rate</span>
           <strong id="totRate">0</strong>
-        </div>
-        <div class="stat-item clickable-stat" onclick="showSection('archivio')">
+        </button>
+
+        <button class="stat-item stat-button" onclick="openArchiveFromDashboard('rateizzatadaPagare')">
           <span class="stat-label">Rate da pagare</span>
           <strong id="totRateDaPagare">0</strong>
-        </div>
+        </button>
       </div>
     </section>
 
@@ -247,6 +230,7 @@
             <option value="dapagare">Da pagare</option>
             <option value="archiviata">Archiviata</option>
             <option value="rateizzata">Rateizzata</option>
+            <option value="rateizzatadaPagare">Rate da pagare</option>
           </select>
 
           <button class="secondary" onclick="resetFilters()">Reset filtri</button>
