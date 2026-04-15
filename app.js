@@ -6,22 +6,41 @@ const DB_NAME = "utenzeManagerDB";
 const DB_VERSION = 1;
 const PDF_STORE = "pdfFiles";
 let db = null;
+let monthlyChart = null;
 
 async function initApp() {
   await initDB();
+  populateFilterOptions();
   renderUtenze();
   renderFatture();
   renderScadenze();
+  renderRateProssime();
   renderAutoletture();
   renderAutolettureProssime();
+  renderNotifiche();
   renderStats();
+  renderMonthlyChart();
   showSection("dashboard");
+  controllaENotificaScadenze(false);
 }
 
 function saveData() {
   localStorage.setItem("utenze", JSON.stringify(utenze));
   localStorage.setItem("fatture", JSON.stringify(fatture));
   localStorage.setItem("autoletture", JSON.stringify(autoletture));
+}
+
+function refreshAll() {
+  populateFilterOptions();
+  renderUtenze();
+  renderFatture();
+  renderScadenze();
+  renderRateProssime();
+  renderAutoletture();
+  renderAutolettureProssime();
+  renderNotifiche();
+  renderStats();
+  renderMonthlyChart();
 }
 
 function showSection(id) {
@@ -78,6 +97,17 @@ function convertiDataPerInput(dataStr) {
   return "";
 }
 
+function parseMoney(value) {
+  if (typeof value !== "string") value = String(value ?? "");
+  const normalized = value.replace(/\./g, "").replace(",", ".").replace(/[^\d.]/g, "");
+  const num = parseFloat(normalized);
+  return Number.isFinite(num) ? num : 0;
+}
+
+function formatMoney(num) {
+  return Number(num).toFixed(2);
+}
+
 function trovaMatch(testo, patterns, groupIndex = 1) {
   for (const pattern of patterns) {
     const match = testo.match(pattern);
@@ -131,6 +161,12 @@ function riconosciTipoDaFornitore(nome) {
   return "";
 }
 
+function toggleRateFields() {
+  const checked = document.getElementById("rateizzata").checked;
+  const fields = document.getElementById("rateFields");
+  fields.classList.toggle("hidden", !checked);
+}
+
 function clearFatturaForm() {
   document.getElementById("fornitore").value = "";
   document.getElementById("tipoFattura").value = "";
@@ -139,6 +175,12 @@ function clearFatturaForm() {
   document.getElementById("numeroFattura").value = "";
   document.getElementById("periodoFattura").value = "";
   document.getElementById("pdf").value = "";
+  document.getElementById("rateizzata").checked = false;
+  document.getElementById("numeroRate").value = "";
+  document.getElementById("importoRata").value = "";
+  document.getElementById("primaScadenzaRata").value = "";
+  document.getElementById("frequenzaRate").value = "mensile";
+  toggleRateFields();
 }
 
 function clearAutoletturaForm() {
@@ -146,6 +188,37 @@ function clearAutoletturaForm() {
   document.getElementById("tipoContatore").value = "";
   document.getElementById("dataAutolettura").value = "";
   document.getElementById("notaAutolettura").value = "";
+}
+
+function addMonths(dateString, monthsToAdd) {
+  const d = new Date(dateString);
+  const originalDay = d.getDate();
+  d.setMonth(d.getMonth() + monthsToAdd);
+
+  if (d.getDate() < originalDay) {
+    d.setDate(0);
+  }
+
+  return d.toISOString().split("T")[0];
+}
+
+function generaPianoRate(numeroRate, importoRata, primaScadenza, frequenza) {
+  const rate = [];
+  for (let i = 0; i < numeroRate; i++) {
+    let dataRata = primaScadenza;
+
+    if (frequenza === "mensile") {
+      dataRata = addMonths(primaScadenza, i);
+    }
+
+    rate.push({
+      numero: i + 1,
+      importo: formatMoney(importoRata),
+      scadenza: dataRata,
+      pagata: false
+    });
+  }
+  return rate;
 }
 
 function addUtenza() {
@@ -203,9 +276,31 @@ async function addFattura() {
   const pdfInput = document.getElementById("pdf");
   const file = pdfInput.files[0];
 
+  const rateizzata = document.getElementById("rateizzata").checked;
+  const numeroRate = parseInt(document.getElementById("numeroRate").value || "0", 10);
+  let importoRata = document.getElementById("importoRata").value.trim();
+  const primaScadenzaRata = document.getElementById("primaScadenzaRata").value;
+  const frequenzaRate = document.getElementById("frequenzaRate").value;
+
   if (!fornitore || !scadenza || !importo) {
     alert("Compila almeno fornitore, scadenza e importo.");
     return;
+  }
+
+  if (rateizzata) {
+    if (!numeroRate || numeroRate < 2 || !primaScadenzaRata) {
+      alert("Per la rateizzazione devi compilare numero rate e prima scadenza.");
+      return;
+    }
+
+    if (!importoRata) {
+      const totale = parseMoney(importo);
+      if (!totale) {
+        alert("Importo totale non valido per calcolare automaticamente le rate.");
+        return;
+      }
+      importoRata = formatMoney(totale / numeroRate);
+    }
   }
 
   const id = Date.now();
@@ -220,6 +315,10 @@ async function addFattura() {
     };
   }
 
+  const rate = rateizzata
+    ? generaPianoRate(numeroRate, parseMoney(importoRata), primaScadenzaRata, frequenzaRate)
+    : [];
+
   fatture.push({
     id,
     fornitore,
@@ -231,37 +330,95 @@ async function addFattura() {
     pdfMeta,
     pagata: false,
     archiviata: false,
+    rateizzata,
+    numeroRate: rateizzata ? numeroRate : 0,
+    importoRata: rateizzata ? formatMoney(parseMoney(importoRata)) : "",
+    primaScadenzaRata: rateizzata ? primaScadenzaRata : "",
+    frequenzaRate: rateizzata ? frequenzaRate : "",
+    rate,
     createdAt: new Date().toISOString()
   });
 
   saveData();
-  renderFatture();
-  renderScadenze();
-  renderStats();
+  refreshAll();
   clearFatturaForm();
 
   alert("Fattura salvata correttamente.");
+}
+
+function getFilteredFatture() {
+  const search = (document.getElementById("searchText")?.value || "").trim().toLowerCase();
+  const filterMonth = document.getElementById("filterMonth")?.value || "";
+  const filterYear = document.getElementById("filterYear")?.value || "";
+  const filterTipo = document.getElementById("filterTipo")?.value || "";
+  const filterStatus = document.getElementById("filterStatus")?.value || "";
+
+  return [...fatture]
+    .filter((f) => {
+      const date = new Date(f.scadenza);
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const year = String(date.getFullYear());
+
+      const matchesSearch =
+        !search ||
+        (f.fornitore || "").toLowerCase().includes(search) ||
+        (f.numeroFattura || "").toLowerCase().includes(search);
+
+      const matchesMonth = !filterMonth || month === filterMonth;
+      const matchesYear = !filterYear || year === filterYear;
+      const matchesTipo = !filterTipo || (f.tipoFattura || "") === filterTipo;
+
+      let matchesStatus = true;
+      if (filterStatus === "pagata") matchesStatus = !!f.pagata;
+      if (filterStatus === "dapagare") matchesStatus = !f.pagata;
+      if (filterStatus === "archiviata") matchesStatus = !!f.archiviata;
+      if (filterStatus === "rateizzata") matchesStatus = !!f.rateizzata;
+
+      return matchesSearch && matchesMonth && matchesYear && matchesTipo && matchesStatus;
+    })
+    .sort((a, b) => new Date(a.scadenza) - new Date(b.scadenza));
 }
 
 function renderFatture() {
   const ul = document.getElementById("listaFatture");
   ul.innerHTML = "";
 
-  if (fatture.length === 0) {
-    ul.innerHTML = "<li>Nessuna fattura salvata.</li>";
+  const fattureOrdinate = getFilteredFatture();
+
+  document.getElementById("filteredCount").textContent = fattureOrdinate.length;
+  document.getElementById("filteredTotal").textContent = formatMoney(
+    fattureOrdinate.reduce((sum, f) => sum + parseMoney(f.importo), 0)
+  );
+
+  if (fattureOrdinate.length === 0) {
+    ul.innerHTML = "<li>Nessuna fattura trovata con i filtri selezionati.</li>";
     return;
   }
-
-  const fattureOrdinate = [...fatture].sort((a, b) => {
-    return new Date(a.scadenza) - new Date(b.scadenza);
-  });
 
   fattureOrdinate.forEach((f) => {
     const originalIndex = fatture.findIndex((item) => item.id === f.id);
     const stato = f.pagata ? "Pagata" : "Da pagare";
     const badgeClass = f.pagata ? "paid" : "pending";
-    const badgeArchivio = f.archiviata
-      ? `<span class="badge archived">Archiviata</span>`
+    const badgeArchivio = f.archiviata ? `<span class="badge archived">Archiviata</span>` : "";
+    const badgeRate = f.rateizzata ? `<span class="badge installment">Rateizzata</span>` : "";
+
+    const rateHtml = f.rateizzata && Array.isArray(f.rate)
+      ? `
+        <div class="installments-box">
+          <strong>Piano rate</strong>
+          ${f.rate.map((r, idx) => `
+            <div class="installment-row">
+              <div>
+                Rata ${r.numero} • € ${escapeHtml(r.importo)} • ${formatDate(r.scadenza)}
+                <div class="small-text">${r.pagata ? "Pagata" : "Da pagare"}</div>
+              </div>
+              <div>
+                ${!r.pagata ? `<button class="small-btn pay-btn" onclick="segnaRataPagata(${originalIndex}, ${idx})">Segna pagata</button>` : ""}
+              </div>
+            </div>
+          `).join("")}
+        </div>
+      `
       : "";
 
     const li = document.createElement("li");
@@ -275,28 +432,33 @@ function renderFatture() {
         <div>
           <span class="badge ${badgeClass}">${stato}</span>
           ${badgeArchivio}
+          ${badgeRate}
         </div>
       </div>
 
-      <div class="small-text">Importo: € ${escapeHtml(f.importo)}</div>
+      <div class="small-text">Importo totale: € ${escapeHtml(f.importo)}</div>
       <div class="small-text">Numero fattura: ${escapeHtml(f.numeroFattura || "-")}</div>
       <div class="small-text">Periodo: ${escapeHtml(f.periodoFattura || "-")}</div>
       <div class="small-text">PDF: ${escapeHtml(f.pdfMeta?.name || "Non allegato")}</div>
 
+      ${
+        f.rateizzata
+          ? `<div class="small-text">Rate: ${escapeHtml(f.numeroRate)} • Importo rata: € ${escapeHtml(f.importoRata)} • Prima scadenza rata: ${formatDate(f.primaScadenzaRata)}</div>`
+          : ""
+      }
+
+      ${rateHtml}
+
       <div class="actions">
         ${
           !f.pagata
-            ? `<button class="small-btn pay-btn" onclick="segnaPagata(${originalIndex})">Segna pagata</button>`
+            ? `<button class="small-btn pay-btn" onclick="segnaPagata(${originalIndex})">Segna bolletta pagata</button>`
             : ""
         }
         <button class="small-btn archive-btn" onclick="toggleArchivio(${originalIndex})">
           ${f.archiviata ? "Togli da archivio" : "Archivia"}
         </button>
-        ${
-          f.pdfMeta
-            ? `<button class="small-btn open-btn" onclick="apriPDF(${f.id})">Apri PDF</button>`
-            : ""
-        }
+        ${f.pdfMeta ? `<button class="small-btn open-btn" onclick="apriPDF(${f.id})">Apri PDF</button>` : ""}
         <button class="small-btn delete-btn" onclick="deleteFattura(${originalIndex})">Elimina</button>
       </div>
     `;
@@ -304,19 +466,127 @@ function renderFatture() {
   });
 }
 
+function applyFilters() {
+  renderFatture();
+}
+
+function resetFilters() {
+  document.getElementById("searchText").value = "";
+  document.getElementById("filterMonth").value = "";
+  document.getElementById("filterYear").value = "";
+  document.getElementById("filterTipo").value = "";
+  document.getElementById("filterStatus").value = "";
+  renderFatture();
+}
+
+function populateFilterOptions() {
+  const monthSelect = document.getElementById("filterMonth");
+  const yearSelect = document.getElementById("filterYear");
+  if (!monthSelect || !yearSelect) return;
+
+  const currentMonth = monthSelect.value;
+  const currentYear = yearSelect.value;
+
+  const months = new Set();
+  const years = new Set();
+
+  fatture.forEach((f) => {
+    if (!f.scadenza) return;
+    const d = new Date(f.scadenza);
+    months.add(String(d.getMonth() + 1).padStart(2, "0"));
+    years.add(String(d.getFullYear()));
+  });
+
+  monthSelect.innerHTML = `<option value="">Tutti i mesi</option>`;
+  [...months].sort().forEach((m) => {
+    monthSelect.innerHTML += `<option value="${m}">${m}</option>`;
+  });
+
+  yearSelect.innerHTML = `<option value="">Tutti gli anni</option>`;
+  [...years].sort().forEach((y) => {
+    yearSelect.innerHTML += `<option value="${y}">${y}</option>`;
+  });
+
+  monthSelect.value = currentMonth;
+  yearSelect.value = currentYear;
+}
+
+function renderMonthlyChart() {
+  const canvas = document.getElementById("monthlyChart");
+  if (!canvas || typeof Chart === "undefined") return;
+
+  const map = {};
+  fatture.forEach((f) => {
+    if (!f.scadenza) return;
+    const d = new Date(f.scadenza);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    map[key] = (map[key] || 0) + parseMoney(f.importo);
+  });
+
+  const labels = Object.keys(map).sort();
+  const values = labels.map((k) => Number(formatMoney(map[k])));
+
+  if (monthlyChart) {
+    monthlyChart.destroy();
+  }
+
+  monthlyChart = new Chart(canvas, {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: "Spese mensili (€)",
+          data: values
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: {
+          display: true
+        }
+      },
+      scales: {
+        y: {
+          beginAtZero: true
+        }
+      }
+    }
+  });
+}
+
 function segnaPagata(index) {
   fatture[index].pagata = true;
+
+  if (Array.isArray(fatture[index].rate)) {
+    fatture[index].rate = fatture[index].rate.map((r) => ({ ...r, pagata: true }));
+  }
+
   saveData();
-  renderFatture();
-  renderScadenze();
-  renderStats();
+  refreshAll();
+}
+
+function segnaRataPagata(fatturaIndex, rataIndex) {
+  const fattura = fatture[fatturaIndex];
+  if (!fattura || !Array.isArray(fattura.rate)) return;
+
+  fattura.rate[rataIndex].pagata = true;
+
+  const tuttePagate = fattura.rate.every((r) => r.pagata);
+  if (tuttePagate) {
+    fattura.pagata = true;
+  }
+
+  saveData();
+  refreshAll();
 }
 
 function toggleArchivio(index) {
   fatture[index].archiviata = !fatture[index].archiviata;
   saveData();
-  renderFatture();
-  renderStats();
+  refreshAll();
 }
 
 async function deleteFattura(index) {
@@ -330,9 +600,7 @@ async function deleteFattura(index) {
 
   fatture.splice(index, 1);
   saveData();
-  renderFatture();
-  renderScadenze();
-  renderStats();
+  refreshAll();
 }
 
 function renderScadenze() {
@@ -373,6 +641,67 @@ function renderScadenze() {
   });
 }
 
+function getAllUnpaidInstallments() {
+  const result = [];
+
+  fatture.forEach((f, fatturaIndex) => {
+    if (f.rateizzata && Array.isArray(f.rate)) {
+      f.rate.forEach((r, rataIndex) => {
+        if (!r.pagata) {
+          result.push({
+            fatturaId: f.id,
+            fatturaIndex,
+            rataIndex,
+            fornitore: f.fornitore,
+            tipoFattura: f.tipoFattura || "",
+            numeroRata: r.numero,
+            importo: r.importo,
+            scadenza: r.scadenza,
+            diffGiorni: daysDiffFromToday(r.scadenza)
+          });
+        }
+      });
+    }
+  });
+
+  return result;
+}
+
+function renderRateProssime() {
+  const div = document.getElementById("rateProssime");
+  div.innerHTML = "";
+
+  const rate = getAllUnpaidInstallments()
+    .filter((r) => r.diffGiorni <= 10)
+    .sort((a, b) => a.diffGiorni - b.diffGiorni);
+
+  if (rate.length === 0) {
+    div.innerHTML = `<div class="empty-state">Nessuna rata imminente nei prossimi 10 giorni.</div>`;
+    return;
+  }
+
+  rate.forEach((r) => {
+    let testo = "";
+    if (r.diffGiorni < 0) {
+      testo = `Scaduta da ${Math.abs(r.diffGiorni)} giorni`;
+    } else if (r.diffGiorni === 0) {
+      testo = "Scade oggi";
+    } else {
+      testo = `Scade tra ${r.diffGiorni} giorni`;
+    }
+
+    const item = document.createElement("div");
+    item.className = "info-item";
+    item.innerHTML = `
+      <strong>${escapeHtml(r.fornitore)}</strong><br>
+      Rata ${r.numeroRata} • € ${escapeHtml(r.importo)}<br>
+      Data: ${formatDate(r.scadenza)}<br>
+      <strong>${testo}</strong>
+    `;
+    div.appendChild(item);
+  });
+}
+
 function addAutolettura() {
   const contatore = document.getElementById("contatore").value.trim();
   const tipo = document.getElementById("tipoContatore").value;
@@ -393,8 +722,7 @@ function addAutolettura() {
   });
 
   saveData();
-  renderAutoletture();
-  renderAutolettureProssime();
+  refreshAll();
   clearAutoletturaForm();
 }
 
@@ -461,11 +789,90 @@ function renderAutolettureProssime() {
   });
 }
 
+function renderNotifiche() {
+  const box = document.getElementById("notificheBox");
+  box.innerHTML = "";
+
+  const notifiche = raccogliNotifiche();
+
+  if (notifiche.length === 0) {
+    box.innerHTML = `<div class="empty-state">Nessuna notifica al momento.</div>`;
+    return;
+  }
+
+  notifiche.forEach((n) => {
+    const div = document.createElement("div");
+    div.className = n.tipo === "danger" ? "danger-item" : "info-item";
+    div.textContent = n.testo;
+    box.appendChild(div);
+  });
+}
+
+function raccogliNotifiche() {
+  const notifiche = [];
+
+  fatture.forEach((f) => {
+    if (!f.pagata) {
+      const diff = daysDiffFromToday(f.scadenza);
+      if (diff < 0) {
+        notifiche.push({
+          tipo: "danger",
+          testo: `${f.fornitore}: bolletta scaduta da ${Math.abs(diff)} giorni`
+        });
+      } else if (diff <= 3) {
+        notifiche.push({
+          tipo: "info",
+          testo: `${f.fornitore}: bolletta in scadenza il ${formatDate(f.scadenza)}`
+        });
+      }
+    }
+  });
+
+  getAllUnpaidInstallments().forEach((r) => {
+    if (r.diffGiorni < 0) {
+      notifiche.push({
+        tipo: "danger",
+        testo: `${r.fornitore}: rata ${r.numeroRata} scaduta da ${Math.abs(r.diffGiorni)} giorni`
+      });
+    } else if (r.diffGiorni <= 3) {
+      notifiche.push({
+        tipo: "info",
+        testo: `${r.fornitore}: rata ${r.numeroRata} in scadenza il ${formatDate(r.scadenza)}`
+      });
+    }
+  });
+
+  autoletture.forEach((a) => {
+    const diff = daysDiffFromToday(a.data);
+    if (diff < 0) {
+      notifiche.push({
+        tipo: "danger",
+        testo: `${a.contatore}: autolettura in ritardo di ${Math.abs(diff)} giorni`
+      });
+    } else if (diff <= 2) {
+      notifiche.push({
+        tipo: "info",
+        testo: `${a.contatore}: autolettura da fare il ${formatDate(a.data)}`
+      });
+    }
+  });
+
+  return notifiche;
+}
+
 function renderStats() {
+  const totalRate = fatture.reduce((sum, f) => sum + (Array.isArray(f.rate) ? f.rate.length : 0), 0);
+  const totalRateDaPagare = fatture.reduce(
+    (sum, f) => sum + (Array.isArray(f.rate) ? f.rate.filter((r) => !r.pagata).length : 0),
+    0
+  );
+
   document.getElementById("totFatture").textContent = fatture.length;
   document.getElementById("totDaPagare").textContent = fatture.filter((f) => !f.pagata).length;
   document.getElementById("totPagate").textContent = fatture.filter((f) => f.pagata).length;
   document.getElementById("totArchiviate").textContent = fatture.filter((f) => f.archiviata).length;
+  document.getElementById("totRate").textContent = totalRate;
+  document.getElementById("totRateDaPagare").textContent = totalRateDaPagare;
 }
 
 async function leggiPDF() {
@@ -497,7 +904,6 @@ async function leggiPDF() {
 
 function analizzaTestoPDF(testo) {
   const testoPulito = testo.replace(/\s+/g, " ").trim();
-  console.log("Testo PDF:", testoPulito);
 
   const importoPatterns = [
     /totale\s+da\s+pagare\s*[:\-]?\s*€?\s*([0-9]+[.,][0-9]{2})/i,
@@ -685,6 +1091,98 @@ async function apriPDF(id) {
     console.error(error);
     alert("Errore nell'apertura del PDF.");
   }
+}
+
+function esportaBackup() {
+  const data = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    utenze,
+    fatture,
+    autoletture
+  };
+
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "backup-utenze.json";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importaBackup() {
+  const file = document.getElementById("backupFile").files[0];
+
+  if (!file) {
+    alert("Seleziona prima un file di backup JSON.");
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = function (e) {
+    try {
+      const data = JSON.parse(e.target.result);
+
+      if (!data || !Array.isArray(data.utenze) || !Array.isArray(data.fatture) || !Array.isArray(data.autoletture)) {
+        alert("File backup non valido.");
+        return;
+      }
+
+      utenze = data.utenze;
+      fatture = data.fatture;
+      autoletture = data.autoletture;
+      saveData();
+      refreshAll();
+
+      alert("Backup importato correttamente.");
+    } catch (error) {
+      console.error(error);
+      alert("Errore durante l'importazione del backup.");
+    }
+  };
+
+  reader.readAsText(file);
+}
+
+async function richiediPermessoNotifiche() {
+  if (!("Notification" in window)) {
+    alert("Questo browser non supporta le notifiche.");
+    return;
+  }
+
+  const permission = await Notification.requestPermission();
+
+  if (permission === "granted") {
+    alert("Notifiche browser attivate.");
+  } else {
+    alert("Permesso notifiche non concesso.");
+  }
+}
+
+function inviaNotificaBrowser(titolo, corpo) {
+  if (!("Notification" in window)) return;
+  if (Notification.permission !== "granted") return;
+
+  new Notification(titolo, {
+    body: corpo
+  });
+}
+
+function controllaENotificaScadenze(forzaManuale = false) {
+  const notifiche = raccogliNotifiche();
+  const chiaviInviate = JSON.parse(localStorage.getItem("notificheInviate")) || {};
+  const oggi = new Date().toISOString().slice(0, 10);
+
+  notifiche.forEach((n) => {
+    const key = `${oggi}-${n.testo}`;
+    if (forzaManuale || !chiaviInviate[key]) {
+      inviaNotificaBrowser("Promemoria Gestione Utenze", n.testo);
+      chiaviInviate[key] = true;
+    }
+  });
+
+  localStorage.setItem("notificheInviate", JSON.stringify(chiaviInviate));
 }
 
 initApp();
