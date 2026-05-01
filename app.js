@@ -109,13 +109,21 @@ const SyncManager = {
 };
 
 function saveSyncConfig() {
-  const url = document.getElementById("syncUrl").value.trim();
+  let rawUrl = document.getElementById("syncUrl").value.trim();
   const secret = document.getElementById("syncSecret").value.trim();
-  if (!url || !secret) {
+  
+  // STRATO DI DIFESA: Estrae solo l'URL valido ignorando sintassi errata (es. Markdown)
+  const urlMatch = rawUrl.match(/(https?:\/\/[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?:\/[^\s)]*)?)/);
+  const cleanUrl = urlMatch ? urlMatch[1] : rawUrl;
+  
+  // Aggiorna l'interfaccia mostrando l'URL corretto e pulito
+  document.getElementById("syncUrl").value = cleanUrl;
+
+  if (!cleanUrl || !secret) {
     alert("Compila URL del Worker e Token di sicurezza.");
     return;
   }
-  SyncManager.saveConfig(url, secret);
+  SyncManager.saveConfig(cleanUrl, secret);
   alert("Configurazione Cloud salvata e download avviato.");
 }
 // --- FINE GESTIONE CLOUD SYNC ---
@@ -126,9 +134,17 @@ async function initApp() {
   
   // Popola l'interfaccia con i dati del Cloud se presenti
   if (SyncManager.config.url) {
-    document.getElementById("syncUrl").value = SyncManager.config.url;
-    document.getElementById("syncSecret").value = SyncManager.config.url ? "********" : "";
-    await SyncManager.pullData();
+    // Difesa retroattiva per eventuali URL corrotti già salvati nel LocalStorage
+    const retroCleanUrl = SyncManager.config.url.match(/(https?:\/\/[^\s)]+)/)?.[1] || SyncManager.config.url;
+    
+    document.getElementById("syncUrl").value = retroCleanUrl;
+    document.getElementById("syncSecret").value = SyncManager.config.secret ? "********" : "";
+    
+    if (retroCleanUrl !== SyncManager.config.url) {
+      SyncManager.saveConfig(retroCleanUrl, SyncManager.config.secret);
+    } else {
+      await SyncManager.pullData();
+    }
   }
 
   autoCreateUtilitiesFromInvoices();
