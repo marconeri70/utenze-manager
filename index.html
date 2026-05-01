@@ -11,9 +11,12 @@
 <body>
   <header class="topbar">
     <div class="topbar-inner">
-      <div>
-        <h1>Gestione Utenze</h1>
-        <p class="subtitle">Bollette, rate, autoletture, notifiche, grafici e archivio PDF</p>
+      <div class="topbar-content">
+        <div>
+          <h1>Gestione Utenze</h1>
+          <p class="subtitle">Bollette, rate, autoletture, notifiche, grafici e archivio PDF</p>
+        </div>
+        <div id="syncStatusIcon" class="sync-status idle" title="Stato sincronizzazione Cloud">☁️</div>
       </div>
     </div>
   </header>
@@ -24,7 +27,7 @@
     <button onclick="showSection('fatture')">Fatture</button>
     <button onclick="showSection('autoletture')">Autoletture</button>
     <button onclick="showSection('archivio')">Archivio</button>
-    <button onclick="showSection('backup')">Backup</button>
+    <button onclick="showSection('cloud')">Cloud & Backup</button>
   </nav>
 
   <main class="container">
@@ -261,20 +264,30 @@
       </div>
     </section>
 
-    <section id="backup" class="section hidden">
+    <section id="cloud" class="section hidden">
       <div class="grid-two">
         <div class="card">
-          <h2>Esporta backup</h2>
-          <p class="hint">Esporta tutti i dati dell'app in un file JSON.</p>
-          <button class="primary" onclick="esportaBackup()">Scarica backup JSON</button>
+          <h2>Sincronizzazione Cloudflare R2</h2>
+          <p class="hint">Mantieni i tuoi dati e PDF sincronizzati e al sicuro nel cloud. Inserisci i dati del tuo Worker.</p>
+          <div class="form-grid">
+            <input id="syncUrl" placeholder="https://tuo-worker.workers.dev" />
+            <input id="syncSecret" type="password" placeholder="Token di sicurezza (Bearer)" />
+          </div>
+          <div class="button-row">
+            <button class="primary" onclick="saveSyncConfig()">Salva e Sincronizza</button>
+            <button class="secondary" onclick="SyncManager.pushData()">Forza Caricamento Dati</button>
+          </div>
         </div>
 
         <div class="card">
-          <h2>Importa backup</h2>
-          <p class="hint">Importa un file JSON salvato in precedenza.</p>
-          <input type="file" id="backupFile" accept="application/json" />
+          <h2>Backup manuale locale</h2>
+          <p class="hint">Esporta o importa un file JSON. Non include i PDF.</p>
           <div class="button-row top-gap">
-            <button class="secondary" onclick="importaBackup()">Importa backup</button>
+            <button class="secondary" onclick="esportaBackup()">Scarica backup JSON</button>
+          </div>
+          <div class="top-gap" style="border-top: 1px solid #d9e2ec; padding-top: 15px; margin-top: 15px;">
+            <input type="file" id="backupFile" accept="application/json" style="margin-bottom: 10px;" />
+            <button class="secondary" onclick="importaBackup()">Importa backup locale</button>
           </div>
         </div>
       </div>
