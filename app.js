@@ -210,7 +210,7 @@ function refreshAll() {
   renderUtilityTypeChart();
 }
 
-// DEEP LINKING: Jump to Section logic
+// --- DEEP LINKING: Jump to Section logic ---
 function showSection(id) {
   document.querySelectorAll(".section").forEach((section) => {
     section.classList.add("hidden");
@@ -223,7 +223,6 @@ function jumpToFattura(fatturaId) {
   resetFilters(false);
   document.getElementById("filterStatus").value = "dapagare";
   
-  // Trova il fornitore per metterlo nella barra di ricerca
   const f = fatture.find(fat => fat.id === fatturaId);
   if (f) {
     document.getElementById("searchText").value = f.fornitore;
@@ -252,6 +251,16 @@ function openArchiveFromDashboard(mode) {
 
   showSection("archivio");
   renderFatture();
+}
+
+function jumpToArchiveWithFilters(filters) {
+  resetFilters(false);
+  if (filters.year) document.getElementById("filterYear").value = filters.year;
+  if (filters.month) document.getElementById("filterMonth").value = filters.month;
+  if (filters.tipo) document.getElementById("filterTipo").value = filters.tipo;
+
+  showSection("archivio");
+  applyFilters();
 }
 
 function escapeHtml(value) {
@@ -532,7 +541,7 @@ function toggleRateFields() {
   fields.classList.toggle("hidden", !checked);
 }
 
-// UTENZE CRUD LOGIC
+// --- UTENZE CRUD LOGIC ---
 function resetUtenzaForm() {
   document.getElementById("editUtenzaId").value = "";
   document.getElementById("nomeUtenza").value = "";
@@ -585,11 +594,9 @@ function saveUtenza() {
   }
 
   if (editIdStr) {
-    // Modalità Modifica
     const id = parseInt(editIdStr, 10);
     const index = utenze.findIndex(u => u.id === id);
     if (index !== -1) {
-      // Controlla duplicati escludendo se stesso
       const exists = utenze.some(u => 
         u.id !== id && 
         u.nome.toLowerCase() === nome.toLowerCase() && 
@@ -604,7 +611,6 @@ function saveUtenza() {
       utenze[index].tipo = tipo;
     }
   } else {
-    // Modalità Nuovo Inserimento
     if (utilityExists(nome, tipo)) {
       alert("Questa utenza esiste già.");
       return;
@@ -638,7 +644,6 @@ function renderUtenze() {
   utenzeOrdinate.forEach((u) => {
     const icon = getProviderIcon(u.nome);
     const li = document.createElement("li");
-    // Classe aggiunta per il deep linking visivo
     li.className = "clickable-item";
     li.onclick = () => editUtenza(u.id);
     
@@ -832,7 +837,7 @@ function getFilteredFatture() {
     .sort((a, b) => new Date(a.scadenza) - new Date(b.scadenza));
 }
 
-// BULK ACTIONS
+// --- BULK ACTIONS ---
 function toggleSelectFattura(id) {
   if (selectedFattureIds.has(id)) {
     selectedFattureIds.delete(id);
@@ -1044,6 +1049,7 @@ function populateFilterOptions() {
   yearSelect.value = currentYear;
 }
 
+// --- GRAFICI INTERATTIVI ---
 function renderMonthlyChart() {
   const canvas = document.getElementById("monthlyChart");
   if (!canvas || typeof Chart === "undefined") return;
@@ -1068,17 +1074,31 @@ function renderMonthlyChart() {
       datasets: [
         {
           label: "Spese mensili (€)",
-          data: values
+          data: values,
+          backgroundColor: "#0b6fc2",
+          borderRadius: 6,
+          hoverBackgroundColor: "#005195"
         }
       ]
     },
     options: {
       responsive: true,
       plugins: {
-        legend: { display: true }
+        legend: { display: false }
       },
       scales: {
         y: { beginAtZero: true }
+      },
+      onHover: (event, chartElement) => {
+        event.native.target.style.cursor = chartElement[0] ? 'pointer' : 'default';
+      },
+      onClick: (event, elements) => {
+        if (elements.length > 0) {
+          const index = elements[0].index;
+          const label = labels[index]; 
+          const [year, month] = label.split("-");
+          jumpToArchiveWithFilters({ year, month });
+        }
       }
     }
   });
@@ -1089,13 +1109,7 @@ function renderUtilityTypeChart() {
   if (!canvas || typeof Chart === "undefined") return;
 
   const map = {
-    Luce: 0,
-    Gas: 0,
-    Acqua: 0,
-    Internet: 0,
-    Telefono: 0,
-    Rifiuti: 0,
-    Altro: 0
+    Luce: 0, Gas: 0, Acqua: 0, Internet: 0, Telefono: 0, Rifiuti: 0, Altro: 0
   };
 
   fatture.forEach((f) => {
@@ -1109,6 +1123,16 @@ function renderUtilityTypeChart() {
 
   if (utilityTypeChart) utilityTypeChart.destroy();
 
+  const backgroundColors = [
+    "#f59e0b", 
+    "#ef4444", 
+    "#3b82f6", 
+    "#8b5cf6", 
+    "#10b981", 
+    "#64748b", 
+    "#cbd5e1"  
+  ];
+
   utilityTypeChart = new Chart(canvas, {
     type: "doughnut",
     data: {
@@ -1116,7 +1140,10 @@ function renderUtilityTypeChart() {
       datasets: [
         {
           label: "Spese per tipo",
-          data: values
+          data: values,
+          backgroundColor: backgroundColors,
+          borderWidth: 2,
+          hoverOffset: 10
         }
       ]
     },
@@ -1124,6 +1151,16 @@ function renderUtilityTypeChart() {
       responsive: true,
       plugins: {
         legend: { position: "bottom" }
+      },
+      onHover: (event, chartElement) => {
+        event.native.target.style.cursor = chartElement[0] ? 'pointer' : 'default';
+      },
+      onClick: (event, elements) => {
+        if (elements.length > 0) {
+          const index = elements[0].index;
+          const label = labels[index]; 
+          jumpToArchiveWithFilters({ tipo: label });
+        }
       }
     }
   });
@@ -1169,7 +1206,7 @@ async function deleteFattura(index) {
   refreshAll();
 }
 
-// DASHBOARD RENDERERS CON DEEP LINKING
+// --- DASHBOARD RENDERERS CON DEEP LINKING ---
 function renderScadenze() {
   const div = document.getElementById("scadenze");
   div.innerHTML = "";
@@ -1323,7 +1360,6 @@ function renderNotifiche() {
     const div = document.createElement("div");
     div.className = `${n.tipo === "danger" ? "danger-item" : "info-item"} clickable-item`;
     
-    // Assegna l'azione in base al tipo di notifica
     div.onclick = () => {
       if (n.targetType === "fattura") jumpToFattura(n.targetId);
       if (n.targetType === "autolettura") jumpToAutolettura(n.targetId);
@@ -1404,6 +1440,7 @@ function renderStats() {
   document.getElementById("totRateDaPagare").textContent = totalRateDaPagare;
 }
 
+// --- GESTIONE PDF E DATABASE ---
 async function leggiPDF() {
   const file = document.getElementById("pdf").files[0];
 
@@ -1596,6 +1633,7 @@ async function apriPDF(id) {
   }
 }
 
+// --- BACKUP E NOTIFICHE ---
 function esportaBackup() {
   const data = {
     version: 1,
