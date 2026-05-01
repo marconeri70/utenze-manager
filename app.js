@@ -8,6 +8,7 @@ const PDF_STORE = "pdfFiles";
 let db = null;
 let monthlyChart = null;
 let utilityTypeChart = null;
+let selectedFattureIds = new Set(); // Gestione stato per Bulk Actions
 
 async function initApp() {
   await initDB();
@@ -80,6 +81,7 @@ function showSection(id) {
     section.classList.add("hidden");
   });
   document.getElementById(id).classList.remove("hidden");
+  clearSelection(); // Pulisce selezioni pendenti al cambio tab
 }
 
 function openArchiveFromDashboard(mode) {
@@ -607,6 +609,72 @@ function getFilteredFatture() {
     .sort((a, b) => new Date(a.scadenza) - new Date(b.scadenza));
 }
 
+// BULK ACTIONS LOGIC
+function toggleSelectFattura(id) {
+  if (selectedFattureIds.has(id)) {
+    selectedFattureIds.delete(id);
+  } else {
+    selectedFattureIds.add(id);
+  }
+  updateBulkBar();
+}
+
+function updateBulkBar() {
+  const bar = document.getElementById("bulkActionsBar");
+  const countSpan = document.getElementById("selectedCount");
+  if (!bar || !countSpan) return;
+  
+  if (selectedFattureIds.size > 0) {
+    bar.classList.remove("hidden");
+    countSpan.textContent = selectedFattureIds.size;
+  } else {
+    bar.classList.add("hidden");
+  }
+}
+
+function clearSelection() {
+  selectedFattureIds.clear();
+  updateBulkBar();
+  renderFatture(); // Re-render per rimuovere visivamente le spunte
+}
+
+function bulkArchive(status = true) {
+  if (selectedFattureIds.size === 0) return;
+
+  fatture = fatture.map(f => {
+    if (selectedFattureIds.has(f.id)) {
+      return { ...f, archiviata: status };
+    }
+    return f;
+  });
+
+  saveData();
+  selectedFattureIds.clear();
+  refreshAll();
+  updateBulkBar();
+}
+
+async function bulkDelete() {
+  if (selectedFattureIds.size === 0) return;
+  
+  const conferma = confirm(`Sei sicuro di voler eliminare ${selectedFattureIds.size} fatture in modo permanente?`);
+  if (!conferma) return;
+
+  const idsToDelete = Array.from(selectedFattureIds);
+
+  for (const id of idsToDelete) {
+    const item = fatture.find(f => f.id === id);
+    if (item?.id) await deletePdfFromDB(item.id);
+  }
+
+  fatture = fatture.filter(f => !selectedFattureIds.has(f.id));
+
+  saveData();
+  selectedFattureIds.clear();
+  refreshAll();
+  updateBulkBar();
+}
+
 function renderFatture() {
   const ul = document.getElementById("listaFatture");
   ul.innerHTML = "";
@@ -630,6 +698,7 @@ function renderFatture() {
     const badgeArchivio = f.archiviata ? `<span class="badge archived">Archiviata</span>` : "";
     const badgeRate = f.rateizzata ? `<span class="badge installment">Rateizzata</span>` : "";
     const icon = getProviderIcon(f.fornitore);
+    const isChecked = selectedFattureIds.has(f.id) ? "checked" : "";
 
     const rateHtml = f.rateizzata && Array.isArray(f.rate)
       ? `
@@ -651,47 +720,53 @@ function renderFatture() {
       : "";
 
     const li = document.createElement("li");
+    li.className = "fattura-item";
     li.innerHTML = `
-      <div class="bill-header">
-        <div class="provider-inline">
-          <span class="provider-icon">${icon}</span>
+      <div class="selection-control">
+        <input type="checkbox" ${isChecked} onchange="toggleSelectFattura(${f.id})">
+      </div>
+      <div class="bill-content">
+        <div class="bill-header">
+          <div class="provider-inline">
+            <span class="provider-icon">${icon}</span>
+            <div>
+              <strong>${escapeHtml(f.fornitore)}</strong>
+              <div class="small-text">Tipo: ${escapeHtml(f.tipoFattura || "-")}</div>
+              <div class="small-text">Scadenza: ${formatDate(f.scadenza)}</div>
+            </div>
+          </div>
           <div>
-            <strong>${escapeHtml(f.fornitore)}</strong>
-            <div class="small-text">Tipo: ${escapeHtml(f.tipoFattura || "-")}</div>
-            <div class="small-text">Scadenza: ${formatDate(f.scadenza)}</div>
+            <span class="badge ${badgeClass}">${stato}</span>
+            ${badgeArchivio}
+            ${badgeRate}
           </div>
         </div>
-        <div>
-          <span class="badge ${badgeClass}">${stato}</span>
-          ${badgeArchivio}
-          ${badgeRate}
-        </div>
-      </div>
 
-      <div class="small-text">Importo totale: € ${escapeHtml(f.importo)}</div>
-      <div class="small-text">Numero fattura: ${escapeHtml(f.numeroFattura || "-")}</div>
-      <div class="small-text">Periodo: ${escapeHtml(f.periodoFattura || "-")}</div>
-      <div class="small-text">PDF: ${escapeHtml(f.pdfMeta?.name || "Non allegato")}</div>
+        <div class="small-text">Importo totale: € ${escapeHtml(f.importo)}</div>
+        <div class="small-text">Numero fattura: ${escapeHtml(f.numeroFattura || "-")}</div>
+        <div class="small-text">Periodo: ${escapeHtml(f.periodoFattura || "-")}</div>
+        <div class="small-text">PDF: ${escapeHtml(f.pdfMeta?.name || "Non allegato")}</div>
 
-      ${
-        f.rateizzata
-          ? `<div class="small-text">Rate: ${escapeHtml(f.numeroRate)} • Importo rata: € ${escapeHtml(f.importoRata)} • Prima scadenza rata: ${formatDate(f.primaScadenzaRata)}</div>`
-          : ""
-      }
-
-      ${rateHtml}
-
-      <div class="actions">
         ${
-          !f.pagata
-            ? `<button class="small-btn pay-btn" onclick="segnaPagata(${originalIndex})">Segna bolletta pagata</button>`
+          f.rateizzata
+            ? `<div class="small-text">Rate: ${escapeHtml(f.numeroRate)} • Importo rata: € ${escapeHtml(f.importoRata)} • Prima scadenza rata: ${formatDate(f.primaScadenzaRata)}</div>`
             : ""
         }
-        <button class="small-btn archive-btn" onclick="toggleArchivio(${originalIndex})">
-          ${f.archiviata ? "Togli da archivio" : "Archivia"}
-        </button>
-        ${f.pdfMeta ? `<button class="small-btn open-btn" onclick="apriPDF(${f.id})">Apri PDF</button>` : ""}
-        <button class="small-btn delete-btn" onclick="deleteFattura(${originalIndex})">Elimina</button>
+
+        ${rateHtml}
+
+        <div class="actions">
+          ${
+            !f.pagata
+              ? `<button class="small-btn pay-btn" onclick="segnaPagata(${originalIndex})">Segna bolletta pagata</button>`
+              : ""
+          }
+          <button class="small-btn archive-btn" onclick="toggleArchivio(${originalIndex})">
+            ${f.archiviata ? "Togli da archivio" : "Archivia"}
+          </button>
+          ${f.pdfMeta ? `<button class="small-btn open-btn" onclick="apriPDF(${f.id})">Apri PDF</button>` : ""}
+          <button class="small-btn delete-btn" onclick="deleteFattura(${originalIndex})">Elimina</button>
+        </div>
       </div>
     `;
     ul.appendChild(li);
@@ -699,6 +774,7 @@ function renderFatture() {
 }
 
 function applyFilters() {
+  clearSelection();
   renderFatture();
 }
 
@@ -708,6 +784,7 @@ function resetFilters(renderNow = true) {
   document.getElementById("filterYear").value = "";
   document.getElementById("filterTipo").value = "";
   document.getElementById("filterStatus").value = "";
+  clearSelection();
   if (renderNow) renderFatture();
 }
 
