@@ -8,11 +8,129 @@ const PDF_STORE = "pdfFiles";
 let db = null;
 let monthlyChart = null;
 let utilityTypeChart = null;
-let selectedFattureIds = new Set(); // Gestione stato per Bulk Actions
+let selectedFattureIds = new Set(); 
+
+// --- GESTIONE CLOUD SYNC ---
+const SyncManager = {
+  config: JSON.parse(localStorage.getItem("syncConfig")) || { url: "", secret: "" },
+  
+  saveConfig(url, secret) {
+    this.config = { url: url.replace(/\/$/, ""), secret };
+    localStorage.setItem("syncConfig", JSON.stringify(this.config));
+    this.pullData();
+  },
+
+  updateStatus(status) {
+    const icon = document.getElementById("syncStatusIcon");
+    if (!icon) return;
+    icon.className = `sync-status ${status}`;
+  },
+
+  async pushData() {
+    if (!this.config.url || !this.config.secret) return;
+    this.updateStatus('syncing');
+    try {
+      const payload = { utenze, fatture, autoletture, timestamp: Date.now() };
+      const res = await fetch(`${this.config.url}/sync/data`, {
+        method: 'POST',
+        headers: { 
+          'Authorization': `Bearer ${this.config.secret}`, 
+          'Content-Type': 'application/json' 
+        },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) throw new Error("Sync upload failed");
+      this.updateStatus('idle');
+    } catch (e) {
+      console.error(e);
+      this.updateStatus('error');
+    }
+  },
+
+  async pullData() {
+    if (!this.config.url || !this.config.secret) return;
+    this.updateStatus('syncing');
+    try {
+      const res = await fetch(`${this.config.url}/sync/data`, {
+        headers: { 'Authorization': `Bearer ${this.config.secret}` }
+      });
+      if (!res.ok) throw new Error("Sync download failed");
+      
+      const data = await res.json();
+      if (data && data.timestamp) {
+        utenze = data.utenze || [];
+        fatture = data.fatture || [];
+        autoletture = data.autoletture || [];
+        saveData(false); // Salva in locale senza innescare un loop di caricamento
+        refreshAll();
+      }
+      this.updateStatus('idle');
+    } catch (e) {
+      console.error(e);
+      this.updateStatus('error');
+    }
+  },
+
+  async pushPdf(id, file) {
+    if (!this.config.url || !this.config.secret) return;
+    this.updateStatus('syncing');
+    try {
+      await fetch(`${this.config.url}/sync/pdf/${id}`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${this.config.secret}` },
+        body: file
+      });
+      this.updateStatus('idle');
+    } catch(e) { 
+      this.updateStatus('error'); 
+    }
+  },
+
+  async getPdf(id) {
+    if (!this.config.url || !this.config.secret) return null;
+    try {
+      const res = await fetch(`${this.config.url}/sync/pdf/${id}`, {
+        headers: { 'Authorization': `Bearer ${this.config.secret}` }
+      });
+      if (!res.ok) return null;
+      return await res.blob();
+    } catch(e) { return null; }
+  },
+
+  async deletePdf(id) {
+    if (!this.config.url || !this.config.secret) return;
+    try {
+      await fetch(`${this.config.url}/sync/pdf/${id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${this.config.secret}` }
+      });
+    } catch(e) {}
+  }
+};
+
+function saveSyncConfig() {
+  const url = document.getElementById("syncUrl").value.trim();
+  const secret = document.getElementById("syncSecret").value.trim();
+  if (!url || !secret) {
+    alert("Compila URL del Worker e Token di sicurezza.");
+    return;
+  }
+  SyncManager.saveConfig(url, secret);
+  alert("Configurazione Cloud salvata e download avviato.");
+}
+// --- FINE GESTIONE CLOUD SYNC ---
 
 async function initApp() {
   await initDB();
   normalizeStoredData();
+  
+  // Popola l'interfaccia con i dati del Cloud se presenti
+  if (SyncManager.config.url) {
+    document.getElementById("syncUrl").value = SyncManager.config.url;
+    document.getElementById("syncSecret").value = SyncManager.config.url ? "********" : "";
+    await SyncManager.pullData();
+  }
+
   autoCreateUtilitiesFromInvoices();
   populateFilterOptions();
   renderUtenze();
@@ -52,13 +170,17 @@ function normalizeStoredData() {
     };
   });
 
-  saveData();
+  saveData(false);
 }
 
-function saveData() {
+function saveData(triggerCloudSync = true) {
   localStorage.setItem("utenze", JSON.stringify(utenze));
   localStorage.setItem("fatture", JSON.stringify(fatture));
   localStorage.setItem("autoletture", JSON.stringify(autoletture));
+  
+  if (triggerCloudSync) {
+    SyncManager.pushData();
+  }
 }
 
 function refreshAll() {
@@ -81,7 +203,7 @@ function showSection(id) {
     section.classList.add("hidden");
   });
   document.getElementById(id).classList.remove("hidden");
-  clearSelection(); // Pulisce selezioni pendenti al cambio tab
+  clearSelection(); 
 }
 
 function openArchiveFromDashboard(mode) {
@@ -609,7 +731,7 @@ function getFilteredFatture() {
     .sort((a, b) => new Date(a.scadenza) - new Date(b.scadenza));
 }
 
-// BULK ACTIONS LOGIC
+// BULK ACTIONS
 function toggleSelectFattura(id) {
   if (selectedFattureIds.has(id)) {
     selectedFattureIds.delete(id);
@@ -635,7 +757,8 @@ function updateBulkBar() {
 function clearSelection() {
   selectedFattureIds.clear();
   updateBulkBar();
-  renderFatture(); // Re-render per rimuovere visivamente le spunte
+  const inputs = document.querySelectorAll('.selection-control input');
+  inputs.forEach(input => input.checked = false);
 }
 
 function bulkArchive(status = true) {
@@ -1295,7 +1418,10 @@ function savePdfToDB(id, file) {
     const store = transaction.objectStore(PDF_STORE);
     const request = store.put({ id, file });
 
-    request.onsuccess = () => resolve(true);
+    request.onsuccess = () => {
+      SyncManager.pushPdf(id, file); // Fire and forget al Cloud
+      resolve(true);
+    };
     request.onerror = () => reject(request.error);
   });
 }
@@ -1311,7 +1437,20 @@ function getPdfFromDB(id) {
     const store = transaction.objectStore(PDF_STORE);
     const request = store.get(id);
 
-    request.onsuccess = () => resolve(request.result?.file || null);
+    request.onsuccess = async () => {
+      if (request.result?.file) {
+        resolve(request.result.file);
+      } else {
+        // Fallback al Cloudflare R2
+        const cloudBlob = await SyncManager.getPdf(id);
+        if (cloudBlob) {
+          await savePdfToDB(id, cloudBlob); // Salva in locale per la prossima volta
+          resolve(cloudBlob);
+        } else {
+          resolve(null);
+        }
+      }
+    };
     request.onerror = () => reject(request.error);
   });
 }
@@ -1327,7 +1466,10 @@ function deletePdfFromDB(id) {
     const store = transaction.objectStore(PDF_STORE);
     const request = store.delete(id);
 
-    request.onsuccess = () => resolve(true);
+    request.onsuccess = () => {
+      SyncManager.deletePdf(id); // Fire and forget al Cloud
+      resolve(true);
+    };
     request.onerror = () => reject(request.error);
   });
 }
@@ -1336,7 +1478,7 @@ async function apriPDF(id) {
   try {
     const file = await getPdfFromDB(id);
     if (!file) {
-      alert("PDF non trovato nell'archivio locale del browser.");
+      alert("PDF non trovato in locale e Cloud non raggiungibile.");
       return;
     }
 
