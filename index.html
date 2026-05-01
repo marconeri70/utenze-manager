@@ -248,6 +248,15 @@
           <div><strong>Totale importi:</strong> € <span id="filteredTotal">0.00</span></div>
         </div>
 
+        <div id="bulkActionsBar" class="bulk-bar hidden">
+          <div><strong id="selectedCount">0</strong> elementi selezionati</div>
+          <div class="button-row">
+            <button class="small-btn archive-btn" onclick="bulkArchive(true)">Archivia</button>
+            <button class="small-btn delete-btn" onclick="bulkDelete()">Elimina</button>
+            <button class="secondary small-btn" onclick="clearSelection()">Annulla</button>
+          </div>
+        </div>
+
         <ul id="listaFatture" class="clean-list"></ul>
       </div>
     </section>
