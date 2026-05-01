@@ -35,24 +35,24 @@
       <div class="grid-two">
         <div class="card">
           <h2>Scadenze bollette vicine</h2>
-          <div id="scadenze" class="list-box"></div>
+          <div id="scadenze" class="list-box interactive-list"></div>
         </div>
 
         <div class="card">
           <h2>Rate imminenti</h2>
-          <div id="rateProssime" class="list-box"></div>
+          <div id="rateProssime" class="list-box interactive-list"></div>
         </div>
       </div>
 
       <div class="grid-two">
         <div class="card">
           <h2>Autoletture prossime</h2>
-          <div id="autolettureProssime" class="list-box"></div>
+          <div id="autolettureProssime" class="list-box interactive-list"></div>
         </div>
 
         <div class="card">
           <h2>Notifiche</h2>
-          <div id="notificheBox" class="list-box"></div>
+          <div id="notificheBox" class="list-box interactive-list"></div>
           <div class="button-row top-gap">
             <button class="secondary" onclick="richiediPermessoNotifiche()">Attiva notifiche browser</button>
             <button class="secondary" onclick="controllaENotificaScadenze(true)">Controlla notifiche adesso</button>
@@ -107,7 +107,10 @@
 
     <section id="utenze" class="section hidden">
       <div class="card">
-        <h2>Nuova Utenza</h2>
+        <h2 id="utenzaFormTitle">Nuova Utenza</h2>
+        
+        <!-- Campo nascosto per gestire la modifica -->
+        <input type="hidden" id="editUtenzaId" value="" />
 
         <div class="form-grid">
           <input id="nomeUtenza" placeholder="Nome fornitore" />
@@ -123,12 +126,17 @@
           </select>
         </div>
 
-        <button class="primary" onclick="addUtenza()">Salva utenza</button>
+        <div class="button-row">
+          <button class="primary" id="btnSalvaUtenza" onclick="saveUtenza()">Salva utenza</button>
+          <button class="secondary hidden" id="btnAnnullaUtenza" onclick="resetUtenzaForm()">Annulla Modifica</button>
+          <button class="danger hidden" id="btnEliminaUtenza" onclick="deleteEditingUtenza()">Elimina Utenza</button>
+        </div>
       </div>
 
       <div class="card">
         <h3>Elenco utenze</h3>
-        <ul id="listaUtenze" class="clean-list"></ul>
+        <p class="hint">Clicca su un'utenza per modificarla o eliminarla.</p>
+        <ul id="listaUtenze" class="clean-list interactive-list"></ul>
       </div>
     </section>
 
