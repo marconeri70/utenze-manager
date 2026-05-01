@@ -61,7 +61,7 @@ const SyncManager = {
         utenze = data.utenze || [];
         fatture = data.fatture || [];
         autoletture = data.autoletture || [];
-        saveData(false); // Salva in locale senza innescare un loop di caricamento
+        saveData(false);
         refreshAll();
       }
       this.updateStatus('idle');
@@ -112,11 +112,9 @@ function saveSyncConfig() {
   let rawUrl = document.getElementById("syncUrl").value.trim();
   const secret = document.getElementById("syncSecret").value.trim();
   
-  // STRATO DI DIFESA: Estrae solo l'URL valido ignorando sintassi errata (es. Markdown)
   const urlMatch = rawUrl.match(/(https?:\/\/[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?:\/[^\s)]*)?)/);
   const cleanUrl = urlMatch ? urlMatch[1] : rawUrl;
   
-  // Aggiorna l'interfaccia mostrando l'URL corretto e pulito
   document.getElementById("syncUrl").value = cleanUrl;
 
   if (!cleanUrl || !secret) {
@@ -132,9 +130,7 @@ async function initApp() {
   await initDB();
   normalizeStoredData();
   
-  // Popola l'interfaccia con i dati del Cloud se presenti
   if (SyncManager.config.url) {
-    // Difesa retroattiva per eventuali URL corrotti già salvati nel LocalStorage
     const retroCleanUrl = SyncManager.config.url.match(/(https?:\/\/[^\s)]+)/)?.[1] || SyncManager.config.url;
     
     document.getElementById("syncUrl").value = retroCleanUrl;
@@ -214,12 +210,34 @@ function refreshAll() {
   renderUtilityTypeChart();
 }
 
+// DEEP LINKING: Jump to Section logic
 function showSection(id) {
   document.querySelectorAll(".section").forEach((section) => {
     section.classList.add("hidden");
   });
   document.getElementById(id).classList.remove("hidden");
   clearSelection(); 
+}
+
+function jumpToFattura(fatturaId) {
+  resetFilters(false);
+  document.getElementById("filterStatus").value = "dapagare";
+  
+  // Trova il fornitore per metterlo nella barra di ricerca
+  const f = fatture.find(fat => fat.id === fatturaId);
+  if (f) {
+    document.getElementById("searchText").value = f.fornitore;
+  }
+  
+  showSection("archivio");
+  applyFilters();
+}
+
+function jumpToAutolettura(contatoreName) {
+  showSection("autoletture");
+  document.getElementById("contatore").value = contatoreName;
+  document.getElementById("dataAutolettura").value = new Date().toISOString().split("T")[0];
+  document.getElementById("contatore").focus();
 }
 
 function openArchiveFromDashboard(mode) {
@@ -514,6 +532,133 @@ function toggleRateFields() {
   fields.classList.toggle("hidden", !checked);
 }
 
+// UTENZE CRUD LOGIC
+function resetUtenzaForm() {
+  document.getElementById("editUtenzaId").value = "";
+  document.getElementById("nomeUtenza").value = "";
+  document.getElementById("tipoUtenza").value = "";
+  
+  document.getElementById("utenzaFormTitle").textContent = "Nuova Utenza";
+  document.getElementById("btnSalvaUtenza").textContent = "Salva utenza";
+  document.getElementById("btnAnnullaUtenza").classList.add("hidden");
+  document.getElementById("btnEliminaUtenza").classList.add("hidden");
+}
+
+function editUtenza(id) {
+  const u = utenze.find(item => item.id === id);
+  if (!u) return;
+
+  document.getElementById("editUtenzaId").value = u.id;
+  document.getElementById("nomeUtenza").value = u.nome;
+  document.getElementById("tipoUtenza").value = u.tipo || "";
+  
+  document.getElementById("utenzaFormTitle").textContent = "Modifica Utenza";
+  document.getElementById("btnSalvaUtenza").textContent = "Aggiorna utenza";
+  document.getElementById("btnAnnullaUtenza").classList.remove("hidden");
+  document.getElementById("btnEliminaUtenza").classList.remove("hidden");
+  
+  document.getElementById("nomeUtenza").focus();
+}
+
+function deleteEditingUtenza() {
+  const idStr = document.getElementById("editUtenzaId").value;
+  if (!idStr) return;
+  const id = parseInt(idStr, 10);
+  
+  const conferma = confirm("Vuoi eliminare definitivamente questa utenza?");
+  if (!conferma) return;
+  
+  utenze = utenze.filter(u => u.id !== id);
+  saveData();
+  renderUtenze();
+  resetUtenzaForm();
+}
+
+function saveUtenza() {
+  const editIdStr = document.getElementById("editUtenzaId").value;
+  const nome = document.getElementById("nomeUtenza").value.trim();
+  const tipo = document.getElementById("tipoUtenza").value;
+
+  if (!nome || !tipo) {
+    alert("Compila nome fornitore e tipo utenza.");
+    return;
+  }
+
+  if (editIdStr) {
+    // Modalità Modifica
+    const id = parseInt(editIdStr, 10);
+    const index = utenze.findIndex(u => u.id === id);
+    if (index !== -1) {
+      // Controlla duplicati escludendo se stesso
+      const exists = utenze.some(u => 
+        u.id !== id && 
+        u.nome.toLowerCase() === nome.toLowerCase() && 
+        u.tipo.toLowerCase() === tipo.toLowerCase()
+      );
+      if (exists) {
+        alert("Questa utenza esiste già.");
+        return;
+      }
+      
+      utenze[index].nome = nome;
+      utenze[index].tipo = tipo;
+    }
+  } else {
+    // Modalità Nuovo Inserimento
+    if (utilityExists(nome, tipo)) {
+      alert("Questa utenza esiste già.");
+      return;
+    }
+    utenze.push({
+      id: Date.now(),
+      nome,
+      tipo,
+      origin: "manuale"
+    });
+  }
+
+  saveData();
+  renderUtenze();
+  resetUtenzaForm();
+}
+
+function renderUtenze() {
+  const ul = document.getElementById("listaUtenze");
+  ul.innerHTML = "";
+
+  if (utenze.length === 0) {
+    ul.innerHTML = "<li class='empty-state'>Nessuna utenza inserita.</li>";
+    return;
+  }
+
+  const utenzeOrdinate = [...utenze].sort((a, b) =>
+    `${a.nome} ${a.tipo}`.localeCompare(`${b.nome} ${b.tipo}`, "it")
+  );
+
+  utenzeOrdinate.forEach((u) => {
+    const icon = getProviderIcon(u.nome);
+    const li = document.createElement("li");
+    // Classe aggiunta per il deep linking visivo
+    li.className = "clickable-item";
+    li.onclick = () => editUtenza(u.id);
+    
+    li.innerHTML = `
+      <div class="bill-header">
+        <div class="provider-inline">
+          <span class="provider-icon">${icon}</span>
+          <div>
+            <strong>${escapeHtml(u.nome)}</strong>
+            <div class="small-text">Tipo: ${escapeHtml(u.tipo)}</div>
+            <div class="small-text">Origine: ${u.origin === "fattura" ? "Creata da fattura" : "Inserita manualmente"}</div>
+          </div>
+        </div>
+        <div class="small-text">✎ Modifica</div>
+      </div>
+    `;
+    ul.appendChild(li);
+  });
+}
+
 function clearFatturaForm() {
   document.getElementById("fornitore").value = "";
   document.getElementById("tipoFattura").value = "";
@@ -561,66 +706,6 @@ function generaPianoRate(numeroRate, importoRata, primaScadenza, frequenza) {
     });
   }
   return rate;
-}
-
-function addUtenza() {
-  const nome = document.getElementById("nomeUtenza").value.trim();
-  const tipo = document.getElementById("tipoUtenza").value;
-
-  if (!nome || !tipo) {
-    alert("Compila nome fornitore e tipo utenza.");
-    return;
-  }
-
-  if (utilityExists(nome, tipo)) {
-    alert("Questa utenza esiste già.");
-    return;
-  }
-
-  utenze.push({
-    id: Date.now(),
-    nome,
-    tipo,
-    origin: "manuale"
-  });
-
-  saveData();
-  renderUtenze();
-
-  document.getElementById("nomeUtenza").value = "";
-  document.getElementById("tipoUtenza").value = "";
-}
-
-function renderUtenze() {
-  const ul = document.getElementById("listaUtenze");
-  ul.innerHTML = "";
-
-  if (utenze.length === 0) {
-    ul.innerHTML = "<li>Nessuna utenza inserita.</li>";
-    return;
-  }
-
-  const utenzeOrdinate = [...utenze].sort((a, b) =>
-    `${a.nome} ${a.tipo}`.localeCompare(`${b.nome} ${b.tipo}`, "it")
-  );
-
-  utenzeOrdinate.forEach((u) => {
-    const icon = getProviderIcon(u.nome);
-    const li = document.createElement("li");
-    li.innerHTML = `
-      <div class="bill-header">
-        <div class="provider-inline">
-          <span class="provider-icon">${icon}</span>
-          <div>
-            <strong>${escapeHtml(u.nome)}</strong>
-            <div class="small-text">Tipo: ${escapeHtml(u.tipo)}</div>
-            <div class="small-text">Origine: ${u.origin === "fattura" ? "Creata da fattura" : "Inserita manualmente"}</div>
-          </div>
-        </div>
-      </div>
-    `;
-    ul.appendChild(li);
-  });
 }
 
 async function addFattura() {
@@ -826,7 +911,7 @@ function renderFatture() {
   );
 
   if (fattureOrdinate.length === 0) {
-    ul.innerHTML = "<li>Nessuna fattura trovata con i filtri selezionati.</li>";
+    ul.innerHTML = "<li class='empty-state'>Nessuna fattura trovata con i filtri selezionati.</li>";
     return;
   }
 
@@ -1084,6 +1169,7 @@ async function deleteFattura(index) {
   refreshAll();
 }
 
+// DASHBOARD RENDERERS CON DEEP LINKING
 function renderScadenze() {
   const div = document.getElementById("scadenze");
   div.innerHTML = "";
@@ -1106,13 +1192,18 @@ function renderScadenze() {
     else testoGiorni = `Scade tra ${f.diffGiorni} giorni`;
 
     const item = document.createElement("div");
-    item.className = "alert-item";
+    item.className = "alert-item clickable-item";
+    item.onclick = () => jumpToFattura(f.id);
+    
     item.innerHTML = `
-      <strong>${escapeHtml(f.fornitore)}</strong><br>
-      Tipo: ${escapeHtml(f.tipoFattura || "-")}<br>
-      Importo: € ${escapeHtml(f.importo)}<br>
-      Data: ${formatDate(f.scadenza)}<br>
-      <strong>${testoGiorni}</strong>
+      <div style="flex:1;">
+        <strong>${escapeHtml(f.fornitore)}</strong><br>
+        Tipo: ${escapeHtml(f.tipoFattura || "-")}<br>
+        Importo: € ${escapeHtml(f.importo)}<br>
+        Data: ${formatDate(f.scadenza)}<br>
+        <strong>${testoGiorni}</strong>
+      </div>
+      <div class="jump-icon">➔</div>
     `;
     div.appendChild(item);
   });
@@ -1164,65 +1255,19 @@ function renderRateProssime() {
     else testo = `Scade tra ${r.diffGiorni} giorni`;
 
     const item = document.createElement("div");
-    item.className = "info-item";
+    item.className = "info-item clickable-item";
+    item.onclick = () => jumpToFattura(r.fatturaId);
+    
     item.innerHTML = `
-      <strong>${escapeHtml(r.fornitore)}</strong><br>
-      Rata ${r.numeroRata} • € ${escapeHtml(r.importo)}<br>
-      Data: ${formatDate(r.scadenza)}<br>
-      <strong>${testo}</strong>
+      <div style="flex:1;">
+        <strong>${escapeHtml(r.fornitore)}</strong><br>
+        Rata ${r.numeroRata} • € ${escapeHtml(r.importo)}<br>
+        Data: ${formatDate(r.scadenza)}<br>
+        <strong>${testo}</strong>
+      </div>
+      <div class="jump-icon">➔</div>
     `;
     div.appendChild(item);
-  });
-}
-
-function addAutolettura() {
-  const contatore = document.getElementById("contatore").value.trim();
-  const tipo = document.getElementById("tipoContatore").value;
-  const data = document.getElementById("dataAutolettura").value;
-  const nota = document.getElementById("notaAutolettura").value.trim();
-
-  if (!contatore || !tipo || !data) {
-    alert("Compila contatore, tipo e data autolettura.");
-    return;
-  }
-
-  autoletture.push({
-    id: Date.now(),
-    contatore,
-    tipo,
-    data,
-    nota
-  });
-
-  saveData();
-  refreshAll();
-  clearAutoletturaForm();
-}
-
-function renderAutoletture() {
-  const ul = document.getElementById("listaAutoletture");
-  ul.innerHTML = "";
-
-  if (autoletture.length === 0) {
-    ul.innerHTML = "<li>Nessuna autolettura salvata.</li>";
-    return;
-  }
-
-  const lista = [...autoletture].sort((a, b) => new Date(a.data) - new Date(b.data));
-
-  lista.forEach((a) => {
-    const li = document.createElement("li");
-    li.innerHTML = `
-      <div class="bill-header">
-        <div>
-          <strong>${escapeHtml(a.contatore)}</strong>
-          <div class="small-text">Tipo: ${escapeHtml(a.tipo)}</div>
-          <div class="small-text">Data: ${formatDate(a.data)}</div>
-          <div class="small-text">Nota: ${escapeHtml(a.nota || "-")}</div>
-        </div>
-      </div>
-    `;
-    ul.appendChild(li);
   });
 }
 
@@ -1247,12 +1292,17 @@ function renderAutolettureProssime() {
     else testo = `Da fare tra ${a.diffGiorni} giorni`;
 
     const item = document.createElement("div");
-    item.className = "info-item";
+    item.className = "info-item clickable-item";
+    item.onclick = () => jumpToAutolettura(a.contatore);
+    
     item.innerHTML = `
-      <strong>${escapeHtml(a.contatore)}</strong><br>
-      Tipo: ${escapeHtml(a.tipo)}<br>
-      Data: ${formatDate(a.data)}<br>
-      <strong>${testo}</strong>
+      <div style="flex:1;">
+        <strong>${escapeHtml(a.contatore)}</strong><br>
+        Tipo: ${escapeHtml(a.tipo)}<br>
+        Data: ${formatDate(a.data)}<br>
+        <strong>${testo}</strong>
+      </div>
+      <div class="jump-icon">➔</div>
     `;
     div.appendChild(item);
   });
@@ -1271,8 +1321,18 @@ function renderNotifiche() {
 
   notifiche.forEach((n) => {
     const div = document.createElement("div");
-    div.className = n.tipo === "danger" ? "danger-item" : "info-item";
-    div.textContent = n.testo;
+    div.className = `${n.tipo === "danger" ? "danger-item" : "info-item"} clickable-item`;
+    
+    // Assegna l'azione in base al tipo di notifica
+    div.onclick = () => {
+      if (n.targetType === "fattura") jumpToFattura(n.targetId);
+      if (n.targetType === "autolettura") jumpToAutolettura(n.targetId);
+    };
+
+    div.innerHTML = `
+      <div style="flex:1;">${n.testo}</div>
+      <div class="jump-icon">➔</div>
+    `;
     box.appendChild(div);
   });
 }
@@ -1283,23 +1343,50 @@ function raccogliNotifiche() {
   fatture.forEach((f) => {
     if (!f.pagata) {
       const diff = daysDiffFromToday(f.scadenza);
-      if (diff < 0) notifiche.push({ tipo: "danger", testo: `${f.fornitore}: bolletta scaduta da ${Math.abs(diff)} giorni` });
-      else if (diff <= 3) notifiche.push({ tipo: "info", testo: `${f.fornitore}: bolletta in scadenza il ${formatDate(f.scadenza)}` });
+      if (diff < 0) notifiche.push({ tipo: "danger", testo: `${f.fornitore}: bolletta scaduta da ${Math.abs(diff)} giorni`, targetType: "fattura", targetId: f.id });
+      else if (diff <= 3) notifiche.push({ tipo: "info", testo: `${f.fornitore}: bolletta in scadenza il ${formatDate(f.scadenza)}`, targetType: "fattura", targetId: f.id });
     }
   });
 
   getAllUnpaidInstallments().forEach((r) => {
-    if (r.diffGiorni < 0) notifiche.push({ tipo: "danger", testo: `${r.fornitore}: rata ${r.numeroRata} scaduta da ${Math.abs(r.diffGiorni)} giorni` });
-    else if (r.diffGiorni <= 3) notifiche.push({ tipo: "info", testo: `${r.fornitore}: rata ${r.numeroRata} in scadenza il ${formatDate(r.scadenza)}` });
+    if (r.diffGiorni < 0) notifiche.push({ tipo: "danger", testo: `${r.fornitore}: rata ${r.numeroRata} scaduta da ${Math.abs(r.diffGiorni)} giorni`, targetType: "fattura", targetId: r.fatturaId });
+    else if (r.diffGiorni <= 3) notifiche.push({ tipo: "info", testo: `${r.fornitore}: rata ${r.numeroRata} in scadenza il ${formatDate(r.scadenza)}`, targetType: "fattura", targetId: r.fatturaId });
   });
 
   autoletture.forEach((a) => {
     const diff = daysDiffFromToday(a.data);
-    if (diff < 0) notifiche.push({ tipo: "danger", testo: `${a.contatore}: autolettura in ritardo di ${Math.abs(diff)} giorni` });
-    else if (diff <= 2) notifiche.push({ tipo: "info", testo: `${a.contatore}: autolettura da fare il ${formatDate(a.data)}` });
+    if (diff < 0) notifiche.push({ tipo: "danger", testo: `${a.contatore}: autolettura in ritardo di ${Math.abs(diff)} giorni`, targetType: "autolettura", targetId: a.contatore });
+    else if (diff <= 2) notifiche.push({ tipo: "info", testo: `${a.contatore}: autolettura da fare il ${formatDate(a.data)}`, targetType: "autolettura", targetId: a.contatore });
   });
 
   return notifiche;
+}
+
+function renderAutoletture() {
+  const ul = document.getElementById("listaAutoletture");
+  ul.innerHTML = "";
+
+  if (autoletture.length === 0) {
+    ul.innerHTML = "<li class='empty-state'>Nessuna autolettura salvata.</li>";
+    return;
+  }
+
+  const lista = [...autoletture].sort((a, b) => new Date(a.data) - new Date(b.data));
+
+  lista.forEach((a) => {
+    const li = document.createElement("li");
+    li.innerHTML = `
+      <div class="bill-header">
+        <div>
+          <strong>${escapeHtml(a.contatore)}</strong>
+          <div class="small-text">Tipo: ${escapeHtml(a.tipo)}</div>
+          <div class="small-text">Data: ${formatDate(a.data)}</div>
+          <div class="small-text">Nota: ${escapeHtml(a.nota || "-")}</div>
+        </div>
+      </div>
+    `;
+    ul.appendChild(li);
+  });
 }
 
 function renderStats() {
@@ -1435,7 +1522,7 @@ function savePdfToDB(id, file) {
     const request = store.put({ id, file });
 
     request.onsuccess = () => {
-      SyncManager.pushPdf(id, file); // Fire and forget al Cloud
+      SyncManager.pushPdf(id, file); 
       resolve(true);
     };
     request.onerror = () => reject(request.error);
@@ -1457,10 +1544,9 @@ function getPdfFromDB(id) {
       if (request.result?.file) {
         resolve(request.result.file);
       } else {
-        // Fallback al Cloudflare R2
         const cloudBlob = await SyncManager.getPdf(id);
         if (cloudBlob) {
-          await savePdfToDB(id, cloudBlob); // Salva in locale per la prossima volta
+          await savePdfToDB(id, cloudBlob); 
           resolve(cloudBlob);
         } else {
           resolve(null);
@@ -1483,7 +1569,7 @@ function deletePdfFromDB(id) {
     const request = store.delete(id);
 
     request.onsuccess = () => {
-      SyncManager.deletePdf(id); // Fire and forget al Cloud
+      SyncManager.deletePdf(id); 
       resolve(true);
     };
     request.onerror = () => reject(request.error);
