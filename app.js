@@ -10,7 +10,7 @@ let monthlyChart = null;
 let utilityTypeChart = null;
 let selectedFattureIds = new Set(); 
 
-// --- GESTIONE CLOUD SYNC ---
+// --- GESTIONE CLOUD SYNC & AI ---
 const SyncManager = {
   config: JSON.parse(localStorage.getItem("syncConfig")) || { url: "", secret: "" },
   
@@ -105,6 +105,32 @@ const SyncManager = {
         headers: { 'Authorization': `Bearer ${this.config.secret}` }
       });
     } catch(e) {}
+  },
+
+  async extractDataFromText(text) {
+    if (!this.config.url || !this.config.secret) {
+      alert("Configura prima il Cloudflare Worker nelle impostazioni Cloud.");
+      return null;
+    }
+    this.updateStatus('syncing');
+    try {
+      const res = await fetch(`${this.config.url}/sync/extract`, {
+        method: 'POST',
+        headers: { 
+          'Authorization': `Bearer ${this.config.secret}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ text })
+      });
+      if (!res.ok) throw new Error("Errore chiamata AI");
+      const data = await res.json();
+      this.updateStatus('idle');
+      return data;
+    } catch(e) { 
+      console.error(e);
+      this.updateStatus('error'); 
+      return null;
+    }
   }
 };
 
@@ -124,7 +150,6 @@ function saveSyncConfig() {
   SyncManager.saveConfig(cleanUrl, secret);
   alert("Configurazione Cloud salvata e download avviato.");
 }
-// --- FINE GESTIONE CLOUD SYNC ---
 
 async function initApp() {
   await initDB();
@@ -210,7 +235,7 @@ function refreshAll() {
   renderUtilityTypeChart();
 }
 
-// --- DEEP LINKING: Jump to Section logic ---
+// --- DEEP LINKING ---
 function showSection(id) {
   document.querySelectorAll(".section").forEach((section) => {
     section.classList.add("hidden");
@@ -289,25 +314,6 @@ function daysDiffFromToday(dateString) {
   return Math.ceil((data.getTime() - oggi.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-function convertiDataPerInput(dataStr) {
-  if (!dataStr) return "";
-
-  if (dataStr.includes("/")) {
-    const parts = dataStr.split("/");
-    if (parts.length === 3) return `${parts[2]}-${parts[1]}-${parts[0]}`;
-  }
-
-  if (dataStr.includes("-")) {
-    const parts = dataStr.split("-");
-    if (parts.length === 3) {
-      if (parts[0].length === 4) return dataStr;
-      return `${parts[2]}-${parts[1]}-${parts[0]}`;
-    }
-  }
-
-  return "";
-}
-
 function parseMoney(value) {
   if (typeof value !== "string") value = String(value ?? "");
   const normalized = value.replace(/\./g, "").replace(",", ".").replace(/[^\d.]/g, "");
@@ -317,14 +323,6 @@ function parseMoney(value) {
 
 function formatMoney(num) {
   return Number(num).toFixed(2);
-}
-
-function trovaMatch(testo, patterns, groupIndex = 1) {
-  for (const pattern of patterns) {
-    const match = testo.match(pattern);
-    if (match && match[groupIndex]) return match[groupIndex].trim();
-  }
-  return "";
 }
 
 function getProviderIcon(name) {
@@ -347,38 +345,6 @@ function getProviderIcon(name) {
   if (n.includes("rifiuti") || n.includes("ambiente")) return "♻️";
 
   return "🏢";
-}
-
-function detectProvider(text, fileName = "") {
-  const source = `${text} ${fileName}`.toLowerCase();
-
-  const providerMap = [
-    { name: "Enel", patterns: ["enel", "enel energia", "enel mercato libero", "servizio elettrico nazionale"] },
-    { name: "Plenitude", patterns: ["eni plenitude", "plenitude", "eni gas e luce", "eni"] },
-    { name: "Acea", patterns: ["acea", "acea energia", "acea ato", "acea ambiente"] },
-    { name: "Fastweb", patterns: ["fastweb"] },
-    { name: "TIM", patterns: ["tim", "telecom italia"] },
-    { name: "Vodafone", patterns: ["vodafone"] },
-    { name: "Iliad", patterns: ["iliad"] },
-    { name: "WindTre", patterns: ["windtre", "wind tre", "wind"] },
-    { name: "Italgas", patterns: ["italgas"] },
-    { name: "A2A", patterns: ["a2a", "a2a energia"] },
-    { name: "Sorgenia", patterns: ["sorgenia"] },
-    { name: "Edison", patterns: ["edison", "edison energia"] },
-    { name: "Hera", patterns: ["hera", "gruppo hera"] },
-    { name: "Sky Wifi", patterns: ["sky wifi", "sky italia"] },
-    { name: "E-distribuzione", patterns: ["e-distribuzione", "edistribuzione"] },
-    { name: "Acquedotto", patterns: ["acquedotto", "servizio idrico", "idrico integrato"] },
-    { name: "Rifiuti", patterns: ["tari", "rifiuti", "igiene urbana", "raccolta rifiuti", "ambiente"] }
-  ];
-
-  for (const provider of providerMap) {
-    if (provider.patterns.some((p) => source.includes(p))) {
-      return provider.name;
-    }
-  }
-
-  return "";
 }
 
 function detectUtilityType(text) {
@@ -452,56 +418,12 @@ function detectUtilityType(text) {
 function riconosciTipoDaFornitore(nome) {
   const valore = (nome || "").toLowerCase();
 
-  if (
-    valore.includes("enel") ||
-    valore.includes("servizio elettrico") ||
-    valore.includes("a2a energia") ||
-    valore.includes("sorgenia") ||
-    valore.includes("edison energia") ||
-    valore.includes("e-distribuzione")
-  ) {
-    return "Luce";
-  }
-
-  if (
-    valore.includes("eni") ||
-    valore.includes("plenitude") ||
-    valore.includes("italgas") ||
-    valore.includes("gas")
-  ) {
-    return "Gas";
-  }
-
-  if (
-    valore.includes("acea") ||
-    valore.includes("acqua") ||
-    valore.includes("idrico") ||
-    valore.includes("acquedotto")
-  ) {
-    return "Acqua";
-  }
-
-  if (valore.includes("fastweb") || valore.includes("sky wifi")) {
-    return "Internet";
-  }
-
-  if (
-    valore.includes("tim") ||
-    valore.includes("vodafone") ||
-    valore.includes("wind") ||
-    valore.includes("iliad") ||
-    valore.includes("telecom")
-  ) {
-    return "Telefono";
-  }
-
-  if (
-    valore.includes("rifiuti") ||
-    valore.includes("ambiente") ||
-    valore.includes("tari")
-  ) {
-    return "Rifiuti";
-  }
+  if (valore.includes("enel") || valore.includes("servizio elettrico") || valore.includes("a2a energia") || valore.includes("sorgenia") || valore.includes("edison energia") || valore.includes("e-distribuzione")) return "Luce";
+  if (valore.includes("eni") || valore.includes("plenitude") || valore.includes("italgas") || valore.includes("gas")) return "Gas";
+  if (valore.includes("acea") || valore.includes("acqua") || valore.includes("idrico") || valore.includes("acquedotto")) return "Acqua";
+  if (valore.includes("fastweb") || valore.includes("sky wifi")) return "Internet";
+  if (valore.includes("tim") || valore.includes("vodafone") || valore.includes("wind") || valore.includes("iliad") || valore.includes("telecom")) return "Telefono";
+  if (valore.includes("rifiuti") || valore.includes("ambiente") || valore.includes("tari")) return "Rifiuti";
 
   return "";
 }
@@ -541,7 +463,7 @@ function toggleRateFields() {
   fields.classList.toggle("hidden", !checked);
 }
 
-// --- UTENZE CRUD LOGIC ---
+// --- UTENZE CRUD ---
 function resetUtenzaForm() {
   document.getElementById("editUtenzaId").value = "";
   document.getElementById("nomeUtenza").value = "";
@@ -691,9 +613,7 @@ function addMonths(dateString, monthsToAdd) {
   const d = new Date(dateString);
   const originalDay = d.getDate();
   d.setMonth(d.getMonth() + monthsToAdd);
-
   if (d.getDate() < originalDay) d.setDate(0);
-
   return d.toISOString().split("T")[0];
 }
 
@@ -1206,7 +1126,7 @@ async function deleteFattura(index) {
   refreshAll();
 }
 
-// --- DASHBOARD RENDERERS CON DEEP LINKING ---
+// --- DASHBOARD RENDERERS ---
 function renderScadenze() {
   const div = document.getElementById("scadenze");
   div.innerHTML = "";
@@ -1440,14 +1360,19 @@ function renderStats() {
   document.getElementById("totRateDaPagare").textContent = totalRateDaPagare;
 }
 
-// --- GESTIONE PDF E DATABASE ---
+// --- LETTURA PDF E INTEGRAZIONE AI CLOUDFLARE ---
 async function leggiPDF() {
   const file = document.getElementById("pdf").files[0];
-
   if (!file) {
     alert("Carica prima un PDF.");
     return;
   }
+
+  // Feedback visivo: l'IA richiede qualche secondo
+  const btn = document.querySelector("button[onclick='leggiPDF()']");
+  const originalText = btn.textContent;
+  btn.textContent = "Analisi IA in corso (attendere)...";
+  btn.disabled = true;
 
   try {
     const arrayBuffer = await file.arrayBuffer();
@@ -1461,72 +1386,30 @@ async function leggiPDF() {
       testoCompleto += " " + content.items.map((item) => item.str).join(" ");
     }
 
-    analizzaTestoPDF(testoCompleto, file.name);
-  } catch (error) {
-    console.error("Errore lettura PDF:", error);
-    alert("Non sono riuscito a leggere questo PDF. Prova con un PDF testuale.");
-  }
-}
+    // Passiamo il testo disordinato al Worker Cloudflare che interrogherà Llama 3
+    const aiData = await SyncManager.extractDataFromText(testoCompleto);
 
-function analizzaTestoPDF(testo, fileName = "") {
-  const testoPulito = testo.replace(/\s+/g, " ").trim();
-
-  const importoPatterns = [
-    /totale\s+da\s+pagare\s*[:\-]?\s*€?\s*([0-9]+[.,][0-9]{2})/i,
-    /importo\s+totale\s*[:\-]?\s*€?\s*([0-9]+[.,][0-9]{2})/i,
-    /da\s+pagare\s*[:\-]?\s*€?\s*([0-9]+[.,][0-9]{2})/i,
-    /totale\s*[:\-]?\s*€?\s*([0-9]+[.,][0-9]{2})/i,
-    /€\s*([0-9]+[.,][0-9]{2})/i
-  ];
-
-  const scadenzaPatterns = [
-    /data\s+di\s+scadenza\s*[:\-]?\s*([0-9]{2}\/[0-9]{2}\/[0-9]{4})/i,
-    /scadenza\s*[:\-]?\s*([0-9]{2}\/[0-9]{2}\/[0-9]{4})/i,
-    /scadenza\s*[:\-]?\s*([0-9]{2}\-[0-9]{2}\-[0-9]{4})/i
-  ];
-
-  const numeroPatterns = [
-    /numero\s+fattura\s*[:\-]?\s*([A-Z0-9\-\/]+)/i,
-    /fattura\s*n\.?\s*([A-Z0-9\-\/]+)/i,
-    /n\.?\s+fattura\s*[:\-]?\s*([A-Z0-9\-\/]+)/i
-  ];
-
-  const periodoPatterns = [
-    /periodo\s*[:\-]?\s*([0-9]{2}\/[0-9]{2}\/[0-9]{4}\s*-\s*[0-9]{2}\/[0-9]{2}\/[0-9]{4})/i,
-    /dal\s*([0-9]{2}\/[0-9]{2}\/[0-9]{4})\s*al\s*([0-9]{2}\/[0-9]{2}\/[0-9]{4})/i
-  ];
-
-  let importo = trovaMatch(testoPulito, importoPatterns, 1);
-  let scadenza = trovaMatch(testoPulito, scadenzaPatterns, 1);
-  let numeroFattura = trovaMatch(testoPulito, numeroPatterns, 1);
-  let periodo = "";
-  let fornitore = detectProvider(testoPulito, fileName);
-  let tipoUtenza =
-    detectUtilityType(`${testoPulito} ${fileName} ${fornitore}`) ||
-    riconosciTipoDaFornitore(fornitore);
-
-  for (const pattern of periodoPatterns) {
-    const match = testoPulito.match(pattern);
-    if (match) {
-      if (match.length >= 3 && pattern.toString().includes("dal")) {
-        periodo = `${match[1]} - ${match[2]}`;
-      } else {
-        periodo = match[1];
-      }
-      break;
+    if (aiData && !aiData.error) {
+      if (aiData.importo) document.getElementById("importo").value = aiData.importo;
+      if (aiData.scadenza) document.getElementById("scadenza").value = aiData.scadenza;
+      if (aiData.numeroFattura) document.getElementById("numeroFattura").value = aiData.numeroFattura;
+      if (aiData.periodo) document.getElementById("periodoFattura").value = aiData.periodo;
+      if (aiData.fornitore) document.getElementById("fornitore").value = aiData.fornitore;
+      if (aiData.tipoFattura) document.getElementById("tipoFattura").value = aiData.tipoFattura;
+      alert("Analisi IA completata. Controlla i campi prima di salvare.");
+    } else {
+      alert("L'Intelligenza Artificiale non è riuscita a leggere correttamente il documento.");
     }
+  } catch (error) {
+    console.error("Errore PDF/IA:", error);
+    alert("Errore tecnico durante la lettura del documento.");
+  } finally {
+    btn.textContent = originalText;
+    btn.disabled = false;
   }
-
-  if (importo) document.getElementById("importo").value = importo.replace(",", ".");
-  if (scadenza) document.getElementById("scadenza").value = convertiDataPerInput(scadenza);
-  if (numeroFattura) document.getElementById("numeroFattura").value = numeroFattura;
-  if (periodo) document.getElementById("periodoFattura").value = periodo;
-  if (fornitore) document.getElementById("fornitore").value = fornitore;
-  if (tipoUtenza) document.getElementById("tipoFattura").value = tipoUtenza;
-
-  alert("Analisi PDF completata. Controlla i dati trovati prima di salvare.");
 }
 
+// --- GESTIONE DATABASE LOCALE INDEXED DB ---
 function initDB() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -1633,7 +1516,7 @@ async function apriPDF(id) {
   }
 }
 
-// --- BACKUP E NOTIFICHE ---
+// --- BACKUP LOCALE E NOTIFICHE PUSH ---
 function esportaBackup() {
   const data = {
     version: 1,
