@@ -21,6 +21,12 @@ body {
   margin: 0 auto;
 }
 
+.topbar-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
 .topbar h1 {
   margin: 0;
   font-size: 28px;
@@ -30,6 +36,33 @@ body {
   margin: 8px 0 0;
   opacity: 0.95;
   font-size: 15px;
+}
+
+.sync-status {
+  font-size: 24px;
+  transition: all 0.3s ease;
+  user-select: none;
+}
+
+.sync-status.idle {
+  opacity: 0.5;
+  filter: grayscale(100%);
+}
+
+.sync-status.syncing {
+  opacity: 1;
+  animation: pulse 1s infinite alternate;
+  filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.8));
+}
+
+.sync-status.error {
+  opacity: 1;
+  filter: hue-rotate(150deg) saturate(300%);
+}
+
+@keyframes pulse {
+  from { transform: scale(0.9); }
+  to { transform: scale(1.1); }
 }
 
 .navbar {
@@ -438,6 +471,12 @@ select {
 }
 
 @media (max-width: 700px) {
+  .topbar-content {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
   .topbar h1 {
     font-size: 24px;
   }
