@@ -177,6 +177,28 @@ select {
   margin-bottom: 10px;
 }
 
+.fattura-item {
+  display: flex;
+  gap: 15px;
+}
+
+.selection-control {
+  display: flex;
+  align-items: flex-start;
+  padding-top: 5px;
+}
+
+.selection-control input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+}
+
+.bill-content {
+  flex: 1;
+  min-width: 0;
+}
+
 .bill-header {
   display: flex;
   justify-content: space-between;
@@ -387,6 +409,28 @@ select {
   color: #124a80;
 }
 
+/* BULK ACTION BAR */
+.bulk-bar {
+  position: sticky;
+  top: 70px;
+  z-index: 9;
+  background: #005195;
+  color: white;
+  padding: 12px 20px;
+  border-radius: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+  animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+  from { transform: translateY(-20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
 @media (max-width: 850px) {
   .grid-two {
     grid-template-columns: 1fr;
@@ -400,5 +444,11 @@ select {
 
   .navbar {
     justify-content: center;
+  }
+
+  .bulk-bar {
+    flex-direction: column;
+    gap: 10px;
+    align-items: flex-start;
   }
 }
