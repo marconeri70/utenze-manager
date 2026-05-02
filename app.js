@@ -314,9 +314,30 @@ function daysDiffFromToday(dateString) {
   return Math.ceil((data.getTime() - oggi.getTime()) / (1000 * 60 * 60 * 24));
 }
 
+// --- NUOVO MOTORE DI PARSING FINANZIARIO ---
 function parseMoney(value) {
   if (typeof value !== "string") value = String(value ?? "");
-  const normalized = value.replace(/\./g, "").replace(",", ".").replace(/[^\d.]/g, "");
+  let v = value.trim();
+  if (!v) return 0;
+
+  const lastComma = v.lastIndexOf(',');
+  const lastDot = v.lastIndexOf('.');
+
+  if (lastComma > lastDot) {
+    // Formato IT: 1.234,56 -> rimuovo punti, converto virgola in punto
+    v = v.replace(/\./g, '').replace(',', '.');
+  } else if (lastDot > lastComma) {
+    // Formato US/AI: 1,234.56 o 158.00
+    // Controllo euristico per intercettare il caso "1.500" inteso come millecinquecento
+    const parts = v.split('.');
+    if (parts.length === 2 && parts[1].length === 3 && lastComma === -1) {
+        v = v.replace(/\./g, '');
+    } else {
+        v = v.replace(/,/g, '');
+    }
+  }
+
+  const normalized = v.replace(/[^\d.-]/g, "");
   const num = parseFloat(normalized);
   return Number.isFinite(num) ? num : 0;
 }
@@ -1131,7 +1152,6 @@ function renderScadenze() {
   const div = document.getElementById("scadenze");
   div.innerHTML = "";
 
-  // FILTRO DI SISTEMA: Esclude le bollette rateizzate dal flusso standard
   const prossime = fatture
     .filter((f) => !f.pagata && !f.rateizzata)
     .map((f) => ({ ...f, diffGiorni: daysDiffFromToday(f.scadenza) }))
@@ -1297,7 +1317,6 @@ function renderNotifiche() {
 function raccogliNotifiche() {
   const notifiche = [];
 
-  // FILTRO DI SISTEMA: Esclude le bollette rateizzate per evitare doppi allarmi
   fatture.forEach((f) => {
     if (!f.pagata && !f.rateizzata) {
       const diff = daysDiffFromToday(f.scadenza);
