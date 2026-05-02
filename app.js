@@ -1131,8 +1131,9 @@ function renderScadenze() {
   const div = document.getElementById("scadenze");
   div.innerHTML = "";
 
+  // FILTRO DI SISTEMA: Esclude le bollette rateizzate dal flusso standard
   const prossime = fatture
-    .filter((f) => !f.pagata)
+    .filter((f) => !f.pagata && !f.rateizzata)
     .map((f) => ({ ...f, diffGiorni: daysDiffFromToday(f.scadenza) }))
     .filter((f) => f.diffGiorni <= 10)
     .sort((a, b) => a.diffGiorni - b.diffGiorni);
@@ -1296,8 +1297,9 @@ function renderNotifiche() {
 function raccogliNotifiche() {
   const notifiche = [];
 
+  // FILTRO DI SISTEMA: Esclude le bollette rateizzate per evitare doppi allarmi
   fatture.forEach((f) => {
-    if (!f.pagata) {
+    if (!f.pagata && !f.rateizzata) {
       const diff = daysDiffFromToday(f.scadenza);
       if (diff < 0) notifiche.push({ tipo: "danger", testo: `${f.fornitore}: bolletta scaduta da ${Math.abs(diff)} giorni`, targetType: "fattura", targetId: f.id });
       else if (diff <= 3) notifiche.push({ tipo: "info", testo: `${f.fornitore}: bolletta in scadenza il ${formatDate(f.scadenza)}`, targetType: "fattura", targetId: f.id });
@@ -1368,7 +1370,6 @@ async function leggiPDF() {
     return;
   }
 
-  // Feedback visivo: l'IA richiede qualche secondo
   const btn = document.querySelector("button[onclick='leggiPDF()']");
   const originalText = btn.textContent;
   btn.textContent = "Analisi IA in corso (attendere)...";
@@ -1386,7 +1387,6 @@ async function leggiPDF() {
       testoCompleto += " " + content.items.map((item) => item.str).join(" ");
     }
 
-    // Passiamo il testo disordinato al Worker Cloudflare che interrogherà Llama 3
     const aiData = await SyncManager.extractDataFromText(testoCompleto);
 
     if (aiData && !aiData.error) {
