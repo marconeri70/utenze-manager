@@ -535,3 +535,73 @@ select {
     align-items: flex-start;
   }
 }
+
+/* VERSIONE 2.0 - GESTIONE RATE E RICEVUTE */
+.installment-editor {
+  display: block;
+  padding: 14px 0;
+}
+
+.installment-main {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.installment-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.installment-edit-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.installment-edit-grid input {
+  padding: 9px 10px;
+  background: #fff;
+}
+
+.installment-note {
+  grid-column: span 2;
+}
+
+.installment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.receipt-btn {
+  display: inline-flex;
+  align-items: center;
+  background: #7c3aed;
+  color: #fff;
+}
+
+.badge.receipt {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
+@media (max-width: 600px) {
+  .installment-note {
+    grid-column: span 1;
+  }
+
+  .installment-actions .small-btn,
+  .installment-actions .receipt-btn {
+    width: 100%;
+    justify-content: center;
+    text-align: center;
+  }
+}

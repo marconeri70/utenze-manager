@@ -3,7 +3,7 @@ let fatture = JSON.parse(localStorage.getItem("fatture")) || [];
 let autoletture = JSON.parse(localStorage.getItem("autoletture")) || [];
 
 const DB_NAME = "utenzeManagerDB";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const PDF_STORE = "pdfFiles";
 let db = null;
 let monthlyChart = null;
@@ -200,10 +200,25 @@ function normalizeStoredData() {
       pagata: false,
       ...f,
       tipoFattura: inferredType,
-      rate: Array.isArray(f.rate) ? f.rate : [],
+      rate: Array.isArray(f.rate) ? f.rate.map((r, idx) => ({
+        id: r.id || `${f.id || Date.now()}-r${idx + 1}`,
+        numero: r.numero || idx + 1,
+        importo: r.importo || "0.00",
+        scadenza: r.scadenza || "",
+        pagata: !!r.pagata,
+        dataPagamento: r.dataPagamento || "",
+        note: r.note || "",
+        ricevutaMeta: r.ricevutaMeta || null
+      })) : [],
       rateizzata: !!f.rateizzata,
       archiviata: !!f.archiviata,
-      pagata: !!f.pagata
+      pagata: !!f.pagata,
+      pod: f.pod || "",
+      pdr: f.pdr || "",
+      codiceCliente: f.codiceCliente || "",
+      indirizzoFornitura: f.indirizzoFornitura || "",
+      consumo: f.consumo || "",
+      unitaConsumo: f.unitaConsumo || ""
     };
   });
 
@@ -593,6 +608,12 @@ function clearFatturaForm() {
   document.getElementById("importo").value = "";
   document.getElementById("numeroFattura").value = "";
   document.getElementById("periodoFattura").value = "";
+  document.getElementById("pod").value = "";
+  document.getElementById("pdr").value = "";
+  document.getElementById("codiceCliente").value = "";
+  document.getElementById("indirizzoFornitura").value = "";
+  document.getElementById("consumo").value = "";
+  document.getElementById("unitaConsumo").value = "";
   document.getElementById("pdf").value = "";
   document.getElementById("rateizzata").checked = false;
   document.getElementById("numeroRate").value = "";
@@ -624,10 +645,14 @@ function generaPianoRate(numeroRate, importoRata, primaScadenza, frequenza) {
     if (frequenza === "mensile") dataRata = addMonths(primaScadenza, i);
 
     rate.push({
+      id: `${Date.now()}-${i + 1}-${Math.floor(Math.random() * 100000)}`,
       numero: i + 1,
       importo: formatMoney(importoRata),
       scadenza: dataRata,
-      pagata: false
+      pagata: false,
+      dataPagamento: "",
+      note: "",
+      ricevutaMeta: null
     });
   }
   return rate;
@@ -640,6 +665,12 @@ async function addFattura() {
   const importo = document.getElementById("importo").value.trim();
   const numeroFattura = document.getElementById("numeroFattura").value.trim();
   const periodoFattura = document.getElementById("periodoFattura").value.trim();
+  const pod = document.getElementById("pod").value.trim();
+  const pdr = document.getElementById("pdr").value.trim();
+  const codiceCliente = document.getElementById("codiceCliente").value.trim();
+  const indirizzoFornitura = document.getElementById("indirizzoFornitura").value.trim();
+  const consumo = document.getElementById("consumo").value.trim();
+  const unitaConsumo = document.getElementById("unitaConsumo").value.trim();
   const pdfInput = document.getElementById("pdf");
   const file = pdfInput.files[0];
 
@@ -700,6 +731,12 @@ async function addFattura() {
     importo,
     numeroFattura,
     periodoFattura,
+    pod,
+    pdr,
+    codiceCliente,
+    indirizzoFornitura,
+    consumo,
+    unitaConsumo,
     pdfMeta,
     pagata: false,
     archiviata: false,
@@ -853,14 +890,36 @@ function renderFatture() {
       ? `
         <div class="installments-box">
           <strong>Piano rate</strong>
-          ${f.rate.map((r, idx) => `
-            <div class="installment-row">
-              <div>
-                Rata ${r.numero} • € ${escapeHtml(r.importo)} • ${formatDate(r.scadenza)}
-                <div class="small-text">${r.pagata ? "Pagata" : "Da pagare"}</div>
+          ${f.rate.map((r) => `
+            <div class="installment-row installment-editor">
+              <div class="installment-main">
+                <strong>Rata ${r.numero}</strong>
+                <span class="badge ${r.pagata ? "paid" : "pending"}">${r.pagata ? "Pagata" : "Da pagare"}</span>
+                ${r.ricevutaMeta ? '<span class="badge receipt">Ricevuta allegata</span>' : ''}
               </div>
-              <div>
-                ${!r.pagata ? `<button class="small-btn pay-btn" onclick="segnaRataPagata(${originalIndex}, ${idx})">Segna pagata</button>` : ""}
+              <div class="installment-edit-grid">
+                <label>Importo
+                  <input id="rata-importo-${f.id}-${r.id}" value="${escapeHtml(r.importo)}" inputmode="decimal">
+                </label>
+                <label>Scadenza
+                  <input id="rata-scadenza-${f.id}-${r.id}" type="date" value="${escapeHtml(r.scadenza)}">
+                </label>
+                <label>Data pagamento
+                  <input id="rata-pagamento-${f.id}-${r.id}" type="date" value="${escapeHtml(r.dataPagamento || '')}">
+                </label>
+                <label class="installment-note">Note
+                  <input id="rata-note-${f.id}-${r.id}" value="${escapeHtml(r.note || '')}" placeholder="Note sulla rata">
+                </label>
+              </div>
+              <div class="installment-actions">
+                <button class="small-btn open-btn" onclick="salvaModificheRata(${f.id}, '${r.id}')">Salva modifiche</button>
+                <button class="small-btn pay-btn" onclick="toggleRataPagata(${f.id}, '${r.id}')">${r.pagata ? "Segna da pagare" : "Segna pagata"}</button>
+                <label class="small-btn receipt-btn">${r.ricevutaMeta ? "Sostituisci ricevuta" : "Carica ricevuta"}
+                  <input type="file" accept="application/pdf,image/*" hidden onchange="caricaRicevutaRata(${f.id}, '${r.id}', this)">
+                </label>
+                ${r.ricevutaMeta ? `<button class="small-btn open-btn" onclick="apriRicevutaRata(${f.id}, '${r.id}')">Apri ricevuta</button>
+                <button class="small-btn delete-btn" onclick="eliminaRicevutaRata(${f.id}, '${r.id}')">Elimina ricevuta</button>` : ''}
+                <button class="small-btn delete-btn" onclick="eliminaRata(${f.id}, '${r.id}')">Elimina rata</button>
               </div>
             </div>
           `).join("")}
@@ -894,6 +953,11 @@ function renderFatture() {
         <div class="small-text">Importo totale: € ${escapeHtml(f.importo)}</div>
         <div class="small-text">Numero fattura: ${escapeHtml(f.numeroFattura || "-")}</div>
         <div class="small-text">Periodo: ${escapeHtml(f.periodoFattura || "-")}</div>
+        ${f.pod ? `<div class="small-text">POD: ${escapeHtml(f.pod)}</div>` : ""}
+        ${f.pdr ? `<div class="small-text">PDR: ${escapeHtml(f.pdr)}</div>` : ""}
+        ${f.codiceCliente ? `<div class="small-text">Codice cliente: ${escapeHtml(f.codiceCliente)}</div>` : ""}
+        ${f.indirizzoFornitura ? `<div class="small-text">Fornitura: ${escapeHtml(f.indirizzoFornitura)}</div>` : ""}
+        ${f.consumo ? `<div class="small-text">Consumo: ${escapeHtml(f.consumo)} ${escapeHtml(f.unitaConsumo || "")}</div>` : ""}
         <div class="small-text">PDF: ${escapeHtml(f.pdfMeta?.name || "Non allegato")}</div>
 
         ${
@@ -1097,13 +1161,97 @@ function segnaPagata(index) {
   refreshAll();
 }
 
-function segnaRataPagata(fatturaIndex, rataIndex) {
-  const fattura = fatture[fatturaIndex];
-  if (!fattura || !Array.isArray(fattura.rate)) return;
+function trovaRata(fatturaId, rataId) {
+  const fattura = fatture.find((f) => Number(f.id) === Number(fatturaId));
+  if (!fattura || !Array.isArray(fattura.rate)) return { fattura: null, rata: null };
+  const rata = fattura.rate.find((r) => String(r.id) === String(rataId));
+  return { fattura, rata };
+}
 
-  fattura.rate[rataIndex].pagata = true;
-  if (fattura.rate.every((r) => r.pagata)) fattura.pagata = true;
+function salvaModificheRata(fatturaId, rataId) {
+  const { fattura, rata } = trovaRata(fatturaId, rataId);
+  if (!fattura || !rata) return;
+  const importo = document.getElementById(`rata-importo-${fatturaId}-${rataId}`)?.value || "";
+  const scadenza = document.getElementById(`rata-scadenza-${fatturaId}-${rataId}`)?.value || "";
+  const dataPagamento = document.getElementById(`rata-pagamento-${fatturaId}-${rataId}`)?.value || "";
+  const note = document.getElementById(`rata-note-${fatturaId}-${rataId}`)?.value.trim() || "";
+  if (!parseMoney(importo) || !scadenza) {
+    alert("Inserisci un importo valido e la data di scadenza.");
+    return;
+  }
+  rata.importo = formatMoney(parseMoney(importo));
+  rata.scadenza = scadenza;
+  rata.dataPagamento = dataPagamento;
+  rata.note = note;
+  if (dataPagamento) rata.pagata = true;
+  fattura.pagata = fattura.rate.length > 0 && fattura.rate.every((r) => r.pagata);
+  saveData();
+  refreshAll();
+  alert("Rata aggiornata.");
+}
 
+function toggleRataPagata(fatturaId, rataId) {
+  const { fattura, rata } = trovaRata(fatturaId, rataId);
+  if (!fattura || !rata) return;
+  rata.pagata = !rata.pagata;
+  rata.dataPagamento = rata.pagata ? (rata.dataPagamento || new Date().toISOString().slice(0, 10)) : "";
+  fattura.pagata = fattura.rate.length > 0 && fattura.rate.every((r) => r.pagata);
+  saveData();
+  refreshAll();
+}
+
+async function caricaRicevutaRata(fatturaId, rataId, input) {
+  const file = input.files?.[0];
+  if (!file) return;
+  const valid = file.type === "application/pdf" || file.type.startsWith("image/");
+  if (!valid) {
+    alert("Puoi caricare solo PDF o immagini.");
+    input.value = "";
+    return;
+  }
+  if (file.size > 15 * 1024 * 1024) {
+    alert("Il file supera 15 MB.");
+    input.value = "";
+    return;
+  }
+  const { fattura, rata } = trovaRata(fatturaId, rataId);
+  if (!fattura || !rata) return;
+  const storageId = `ricevuta-${fatturaId}-${rataId}`;
+  await savePdfToDB(storageId, file);
+  rata.ricevutaMeta = { storageId, name: file.name, type: file.type, size: file.size };
+  rata.pagata = true;
+  rata.dataPagamento = rata.dataPagamento || new Date().toISOString().slice(0, 10);
+  fattura.pagata = fattura.rate.every((r) => r.pagata);
+  saveData();
+  refreshAll();
+}
+
+async function apriRicevutaRata(fatturaId, rataId) {
+  const { rata } = trovaRata(fatturaId, rataId);
+  if (!rata?.ricevutaMeta?.storageId) return;
+  await apriAllegato(rata.ricevutaMeta.storageId, "Ricevuta non trovata in locale o nel cloud.");
+}
+
+async function eliminaRicevutaRata(fatturaId, rataId) {
+  const { rata } = trovaRata(fatturaId, rataId);
+  if (!rata?.ricevutaMeta?.storageId) return;
+  if (!confirm("Vuoi eliminare la ricevuta allegata?")) return;
+  await deletePdfFromDB(rata.ricevutaMeta.storageId);
+  rata.ricevutaMeta = null;
+  saveData();
+  refreshAll();
+}
+
+async function eliminaRata(fatturaId, rataId) {
+  const fattura = fatture.find((f) => Number(f.id) === Number(fatturaId));
+  if (!fattura || !confirm("Vuoi eliminare questa rata dal piano?")) return;
+  const rata = fattura.rate.find((r) => String(r.id) === String(rataId));
+  if (rata?.ricevutaMeta?.storageId) await deletePdfFromDB(rata.ricevutaMeta.storageId);
+  fattura.rate = fattura.rate.filter((r) => String(r.id) !== String(rataId));
+  fattura.rate.forEach((r, idx) => { r.numero = idx + 1; });
+  fattura.numeroRate = fattura.rate.length;
+  fattura.rateizzata = fattura.rate.length > 0;
+  fattura.pagata = fattura.rate.length > 0 && fattura.rate.every((r) => r.pagata);
   saveData();
   refreshAll();
 }
@@ -1120,6 +1268,11 @@ async function deleteFattura(index) {
 
   const item = fatture[index];
   if (item?.id) await deletePdfFromDB(item.id);
+  if (Array.isArray(item?.rate)) {
+    for (const rata of item.rate) {
+      if (rata.ricevutaMeta?.storageId) await deletePdfFromDB(rata.ricevutaMeta.storageId);
+    }
+  }
 
   fatture.splice(index, 1);
   saveData();
@@ -1396,6 +1549,22 @@ async function leggiPDF() {
       if (aiData.periodo) document.getElementById("periodoFattura").value = aiData.periodo;
       if (aiData.fornitore) document.getElementById("fornitore").value = aiData.fornitore;
       if (aiData.tipoFattura) document.getElementById("tipoFattura").value = aiData.tipoFattura;
+      if (aiData.pod) document.getElementById("pod").value = aiData.pod;
+      if (aiData.pdr) document.getElementById("pdr").value = aiData.pdr;
+      if (aiData.codiceCliente) document.getElementById("codiceCliente").value = aiData.codiceCliente;
+      if (aiData.indirizzoFornitura) document.getElementById("indirizzoFornitura").value = aiData.indirizzoFornitura;
+      if (aiData.consumo) document.getElementById("consumo").value = aiData.consumo;
+      if (aiData.unitaConsumo) document.getElementById("unitaConsumo").value = aiData.unitaConsumo;
+      const numeroRateAI = Number(aiData.numeroRate || aiData.rate?.length || 0);
+      const primaScadenzaAI = aiData.primaScadenzaRata || aiData.rate?.[0]?.scadenza || "";
+      const importoRataAI = aiData.importoRata || aiData.rate?.[0]?.importo || "";
+      if (numeroRateAI >= 2 && primaScadenzaAI) {
+        document.getElementById("rateizzata").checked = true;
+        toggleRateFields();
+        document.getElementById("numeroRate").value = numeroRateAI;
+        document.getElementById("primaScadenzaRata").value = primaScadenzaAI;
+        if (importoRataAI) document.getElementById("importoRata").value = importoRataAI;
+      }
       alert("Analisi IA completata. Controlla i campi prima di salvare.");
     } else {
       alert("L'Intelligenza Artificiale non è riuscita a leggere correttamente il documento.");
@@ -1494,6 +1663,22 @@ function deletePdfFromDB(id) {
     };
     request.onerror = () => reject(request.error);
   });
+}
+
+async function apriAllegato(id, messaggioErrore = "Allegato non trovato.") {
+  try {
+    const file = await getPdfFromDB(id);
+    if (!file) {
+      alert(messaggioErrore);
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    window.open(url, "_blank");
+    setTimeout(() => URL.revokeObjectURL(url), 15000);
+  } catch (error) {
+    console.error(error);
+    alert("Errore nell'apertura dell'allegato.");
+  }
 }
 
 async function apriPDF(id) {

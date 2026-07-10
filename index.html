@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Gestione Utenze</title>
+  <title>Gestione Utenze 2.0</title>
   <link rel="stylesheet" href="style.css" />
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#005195" />
@@ -13,7 +13,7 @@
     <div class="topbar-inner">
       <div class="topbar-content">
         <div>
-          <h1>Gestione Utenze</h1>
+          <h1>Gestione Utenze 2.0</h1>
           <p class="subtitle">Bollette, rate, autoletture, notifiche, grafici e archivio PDF</p>
         </div>
         <div id="syncStatusIcon" class="sync-status idle" title="Stato sincronizzazione Cloud">☁️</div>
@@ -160,6 +160,12 @@
           <input id="importo" placeholder="Importo totale" />
           <input id="numeroFattura" placeholder="Numero fattura" />
           <input id="periodoFattura" placeholder="Periodo fattura" />
+          <input id="pod" placeholder="POD (luce)" />
+          <input id="pdr" placeholder="PDR (gas)" />
+          <input id="codiceCliente" placeholder="Codice cliente" />
+          <input id="indirizzoFornitura" placeholder="Indirizzo fornitura" />
+          <input id="consumo" placeholder="Consumo fatturato" />
+          <input id="unitaConsumo" placeholder="Unità (kWh, Smc, mc)" />
           <input type="file" id="pdf" accept="application/pdf" />
         </div>
 
@@ -185,7 +191,7 @@
         </div>
 
         <p class="hint">
-          L’app prova a riconoscere gestore e tipo utenza dal PDF. Se lasci vuoto l’importo rata, lo calcola automaticamente.
+          L’app prova a riconoscere gestore, tipo utenza, POD/PDR, consumi e piano rate dal PDF. Controlla sempre i dati prima di salvare.
         </p>
       </div>
     </section>
