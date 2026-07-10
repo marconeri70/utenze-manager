@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Gestione Utenze</title>
+
   <link rel="stylesheet" href="style.css" />
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#005195" />
@@ -11,12 +12,9 @@
 <body>
   <header class="topbar">
     <div class="topbar-inner">
-      <div class="topbar-content">
-        <div>
-          <h1>Gestione Utenze</h1>
-          <p class="subtitle">Bollette, rate, autoletture, notifiche, grafici e archivio PDF</p>
-        </div>
-        <div id="syncStatusIcon" class="sync-status idle" title="Stato sincronizzazione Cloud">☁️</div>
+      <div>
+        <h1>Gestione Utenze</h1>
+        <p class="subtitle">Bollette, rate, autoletture, notifiche, grafici e archivio PDF</p>
       </div>
     </div>
   </header>
@@ -27,7 +25,7 @@
     <button onclick="showSection('fatture')">Fatture</button>
     <button onclick="showSection('autoletture')">Autoletture</button>
     <button onclick="showSection('archivio')">Archivio</button>
-    <button onclick="showSection('cloud')">Cloud & Backup</button>
+    <button onclick="showSection('backup')">Cloud &amp; Backup</button>
   </nav>
 
   <main class="container">
@@ -35,27 +33,33 @@
       <div class="grid-two">
         <div class="card">
           <h2>Scadenze bollette vicine</h2>
-          <div id="scadenze" class="list-box interactive-list"></div>
+          <div id="scadenze" class="list-box"></div>
         </div>
 
         <div class="card">
           <h2>Rate imminenti</h2>
-          <div id="rateProssime" class="list-box interactive-list"></div>
+          <div id="rateProssime" class="list-box"></div>
         </div>
       </div>
 
       <div class="grid-two">
         <div class="card">
           <h2>Autoletture prossime</h2>
-          <div id="autolettureProssime" class="list-box interactive-list"></div>
+          <div id="autolettureProssime" class="list-box"></div>
         </div>
 
         <div class="card">
           <h2>Notifiche</h2>
-          <div id="notificheBox" class="list-box interactive-list"></div>
+          <div id="notificheBox" class="list-box"></div>
+
           <div class="button-row top-gap">
-            <button class="secondary" onclick="richiediPermessoNotifiche()">Attiva notifiche browser</button>
-            <button class="secondary" onclick="controllaENotificaScadenze(true)">Controlla notifiche adesso</button>
+            <button class="secondary" onclick="richiediPermessoNotifiche()">
+              Attiva notifiche browser
+            </button>
+
+            <button class="secondary" onclick="controllaENotificaScadenze(true)">
+              Controlla notifiche adesso
+            </button>
           </div>
         </div>
       </div>
@@ -107,13 +111,11 @@
 
     <section id="utenze" class="section hidden">
       <div class="card">
-        <h2 id="utenzaFormTitle">Nuova Utenza</h2>
-        
-        <!-- Campo nascosto per gestire la modifica -->
-        <input type="hidden" id="editUtenzaId" value="" />
+        <h2>Nuova Utenza</h2>
 
         <div class="form-grid">
           <input id="nomeUtenza" placeholder="Nome fornitore" />
+
           <select id="tipoUtenza">
             <option value="">Seleziona tipo utenza</option>
             <option value="Luce">Luce</option>
@@ -126,17 +128,12 @@
           </select>
         </div>
 
-        <div class="button-row">
-          <button class="primary" id="btnSalvaUtenza" onclick="saveUtenza()">Salva utenza</button>
-          <button class="secondary hidden" id="btnAnnullaUtenza" onclick="resetUtenzaForm()">Annulla Modifica</button>
-          <button class="danger hidden" id="btnEliminaUtenza" onclick="deleteEditingUtenza()">Elimina Utenza</button>
-        </div>
+        <button class="primary" onclick="addUtenza()">Salva utenza</button>
       </div>
 
       <div class="card">
         <h3>Elenco utenze</h3>
-        <p class="hint">Clicca su un'utenza per modificarla o eliminarla.</p>
-        <ul id="listaUtenze" class="clean-list interactive-list"></ul>
+        <ul id="listaUtenze" class="clean-list"></ul>
       </div>
     </section>
 
@@ -146,6 +143,7 @@
 
         <div class="form-grid">
           <input id="fornitore" placeholder="Fornitore" />
+
           <select id="tipoFattura">
             <option value="">Tipo utenza collegata</option>
             <option value="Luce">Luce</option>
@@ -156,6 +154,7 @@
             <option value="Rifiuti">Rifiuti</option>
             <option value="Altro">Altro</option>
           </select>
+
           <input type="date" id="scadenza" />
           <input id="importo" placeholder="Importo totale" />
           <input id="numeroFattura" placeholder="Numero fattura" />
@@ -173,6 +172,7 @@
             <input id="numeroRate" type="number" min="2" placeholder="Numero rate" />
             <input id="importoRata" placeholder="Importo singola rata (opzionale)" />
             <input id="primaScadenzaRata" type="date" />
+
             <select id="frequenzaRate">
               <option value="mensile">Mensile</option>
             </select>
@@ -185,7 +185,7 @@
         </div>
 
         <p class="hint">
-          L’app prova a riconoscere gestore e tipo utenza dal PDF. Se lasci vuoto l’importo rata, lo calcola automaticamente.
+          L’app prova a riconoscere gestore, tipo utenza e piano rate dal PDF.
         </p>
       </div>
     </section>
@@ -196,6 +196,7 @@
 
         <div class="form-grid">
           <input id="contatore" placeholder="Contatore / fornitore" />
+
           <select id="tipoContatore">
             <option value="">Seleziona tipo</option>
             <option value="Luce">Luce</option>
@@ -203,6 +204,7 @@
             <option value="Acqua">Acqua</option>
             <option value="Altro">Altro</option>
           </select>
+
           <input type="date" id="dataAutolettura" />
           <input id="notaAutolettura" placeholder="Nota facoltativa" />
         </div>
@@ -221,7 +223,11 @@
         <h2>Archivio fatture</h2>
 
         <div class="filter-grid">
-          <input id="searchText" placeholder="Cerca fornitore o numero fattura" oninput="applyFilters()" />
+          <input
+            id="searchText"
+            placeholder="Cerca fornitore o numero fattura"
+            oninput="applyFilters()"
+          />
 
           <select id="filterMonth" onchange="applyFilters()">
             <option value="">Tutti i mesi</option>
@@ -255,16 +261,14 @@
         </div>
 
         <div class="summary-strip">
-          <div><strong>Fatture trovate:</strong> <span id="filteredCount">0</span></div>
-          <div><strong>Totale importi:</strong> € <span id="filteredTotal">0.00</span></div>
-        </div>
+          <div>
+            <strong>Fatture trovate:</strong>
+            <span id="filteredCount">0</span>
+          </div>
 
-        <div id="bulkActionsBar" class="bulk-bar hidden">
-          <div><strong id="selectedCount">0</strong> elementi selezionati</div>
-          <div class="button-row">
-            <button class="small-btn archive-btn" onclick="bulkArchive(true)">Archivia</button>
-            <button class="small-btn delete-btn" onclick="bulkDelete()">Elimina</button>
-            <button class="secondary small-btn" onclick="clearSelection()">Annulla</button>
+          <div>
+            <strong>Totale importi:</strong>
+            € <span id="filteredTotal">0.00</span>
           </div>
         </div>
 
@@ -272,30 +276,22 @@
       </div>
     </section>
 
-    <section id="cloud" class="section hidden">
+    <section id="backup" class="section hidden">
       <div class="grid-two">
         <div class="card">
-          <h2>Sincronizzazione Cloudflare R2</h2>
-          <p class="hint">Mantieni i tuoi dati e PDF sincronizzati e al sicuro nel cloud. Inserisci i dati del tuo Worker.</p>
-          <div class="form-grid">
-            <input id="syncUrl" placeholder="https://tuo-worker.workers.dev" />
-            <input id="syncSecret" type="password" placeholder="Token di sicurezza (Bearer)" />
-          </div>
-          <div class="button-row">
-            <button class="primary" onclick="saveSyncConfig()">Salva e Sincronizza</button>
-            <button class="secondary" onclick="SyncManager.pushData()">Forza Caricamento Dati</button>
-          </div>
+          <h2>Esporta backup</h2>
+          <p class="hint">Esporta dati e metadati dell'app in JSON.</p>
+          <button class="primary" onclick="esportaBackup()">Scarica backup JSON</button>
         </div>
 
         <div class="card">
-          <h2>Backup manuale locale</h2>
-          <p class="hint">Esporta o importa un file JSON. Non include i PDF.</p>
+          <h2>Importa backup</h2>
+          <p class="hint">Importa un backup JSON salvato in precedenza.</p>
+
+          <input type="file" id="backupFile" accept="application/json" />
+
           <div class="button-row top-gap">
-            <button class="secondary" onclick="esportaBackup()">Scarica backup JSON</button>
-          </div>
-          <div class="top-gap" style="border-top: 1px solid #d9e2ec; padding-top: 15px; margin-top: 15px;">
-            <input type="file" id="backupFile" accept="application/json" style="margin-bottom: 10px;" />
-            <button class="secondary" onclick="importaBackup()">Importa backup locale</button>
+            <button class="secondary" onclick="importaBackup()">Importa backup</button>
           </div>
         </div>
       </div>
@@ -308,9 +304,9 @@
 
   <script>
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("service-worker.js")
-        .then(() => console.log("Service Worker registrato"))
-        .catch((err) => console.log("Errore SW:", err));
+      navigator.serviceWorker
+        .register("service-worker.js")
+        .catch((error) => console.error("Errore Service Worker:", error));
     }
   </script>
 </body>
