@@ -9,12 +9,6 @@ body {
   color: #1f2937;
 }
 
-button,
-input,
-select {
-  font: inherit;
-}
-
 .topbar {
   background: linear-gradient(135deg, #005195, #0b6fc2);
   color: white;
@@ -25,6 +19,12 @@ select {
 .topbar-inner {
   max-width: 1200px;
   margin: 0 auto;
+}
+
+.topbar-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
 .topbar h1 {
@@ -38,12 +38,38 @@ select {
   font-size: 15px;
 }
 
+.sync-status {
+  font-size: 24px;
+  transition: all 0.3s ease;
+  user-select: none;
+}
+
+.sync-status.idle {
+  opacity: 0.5;
+  filter: grayscale(100%);
+}
+
+.sync-status.syncing {
+  opacity: 1;
+  animation: pulse 1s infinite alternate;
+  filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.8));
+}
+
+.sync-status.error {
+  opacity: 1;
+  filter: hue-rotate(150deg) saturate(300%);
+}
+
+@keyframes pulse {
+  from { transform: scale(0.9); }
+  to { transform: scale(1.1); }
+}
+
 .navbar {
   display: flex;
   flex-wrap: wrap;
-  justify-content: center;
-  gap: 12px;
-  padding: 18px 14px;
+  gap: 10px;
+  padding: 14px;
   background: white;
   border-bottom: 1px solid #d9e2ec;
   position: sticky;
@@ -53,17 +79,16 @@ select {
 
 .navbar button {
   border: none;
-  background: #005b9f;
+  background: #005195;
   color: white;
-  padding: 13px 22px;
-  border-radius: 18px;
+  padding: 10px 16px;
+  border-radius: 10px;
   cursor: pointer;
-  font-weight: 700;
+  font-weight: bold;
   transition: 0.2s ease;
 }
 
-.navbar button:hover,
-.navbar button:focus-visible {
+.navbar button:hover {
   transform: translateY(-1px);
   background: #0a66b2;
 }
@@ -119,12 +144,6 @@ select {
   font-size: 14px;
 }
 
-input:focus,
-select:focus {
-  outline: 2px solid rgba(11, 111, 194, 0.18);
-  border-color: #0b6fc2;
-}
-
 .rate-box {
   margin: 16px 0;
   padding: 14px;
@@ -137,13 +156,9 @@ select:focus {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-weight: 700;
+  font-weight: bold;
   color: #124a80;
   margin-bottom: 12px;
-}
-
-.checkbox-line input {
-  width: auto;
 }
 
 .button-row {
@@ -157,11 +172,12 @@ select:focus {
 }
 
 .primary,
-.secondary {
+.secondary,
+.danger {
   border: none;
   border-radius: 12px;
   padding: 12px 16px;
-  font-weight: 700;
+  font-weight: bold;
   cursor: pointer;
   transition: 0.2s ease;
 }
@@ -176,9 +192,51 @@ select:focus {
   color: #005195;
 }
 
+.danger {
+  background: #b91c1c;
+  color: white;
+}
+
 .primary:hover,
-.secondary:hover {
+.secondary:hover,
+.danger:hover {
   transform: translateY(-1px);
+}
+
+/* DEEP LINKING STYLES */
+.clickable-item {
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.clickable-item:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 81, 149, 0.15);
+  border-color: #0a66b2 !important;
+}
+
+.jump-icon {
+  font-size: 18px;
+  color: #005195;
+  opacity: 0.5;
+  transition: 0.2s ease;
+  padding-left: 10px;
+}
+
+.clickable-item:hover .jump-icon {
+  opacity: 1;
+  transform: translateX(3px);
+}
+
+.interactive-list .alert-item,
+.interactive-list .info-item,
+.interactive-list .danger-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
 .clean-list {
@@ -187,12 +245,34 @@ select:focus {
   margin: 0;
 }
 
-.clean-list > li {
+.clean-list li {
   background: #f8fafc;
   border: 1px solid #e2e8f0;
-  border-radius: 18px;
-  padding: 18px;
-  margin-bottom: 14px;
+  border-radius: 14px;
+  padding: 14px;
+  margin-bottom: 10px;
+}
+
+.fattura-item {
+  display: flex;
+  gap: 15px;
+}
+
+.selection-control {
+  display: flex;
+  align-items: flex-start;
+  padding-top: 5px;
+}
+
+.selection-control input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+}
+
+.bill-content {
+  flex: 1;
+  min-width: 0;
 }
 
 .bill-header {
@@ -210,13 +290,13 @@ select:focus {
 }
 
 .provider-icon {
-  width: 42px;
-  height: 42px;
+  width: 40px;
+  height: 40px;
   border-radius: 12px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 20px;
+  font-size: 19px;
   background: #eef6ff;
   border: 1px solid #c7def6;
   flex-shrink: 0;
@@ -227,7 +307,7 @@ select:focus {
   padding: 5px 10px;
   border-radius: 999px;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: bold;
   margin-left: 6px;
   margin-top: 4px;
 }
@@ -252,37 +332,40 @@ select:focus {
   color: #005195;
 }
 
-.list-box .alert-item,
-.list-box .info-item,
-.list-box .danger-item,
-.list-box .empty-state {
-  padding: 12px;
-  border-radius: 12px;
-  margin-bottom: 10px;
-}
-
 .list-box .alert-item {
   background: #fff8e1;
   border: 1px solid #f4d35e;
   color: #6b5500;
+  padding: 12px;
+  border-radius: 12px;
+  margin-bottom: 10px;
 }
 
 .list-box .info-item {
   background: #eef6ff;
   border: 1px solid #c7def6;
   color: #124a80;
+  padding: 12px;
+  border-radius: 12px;
+  margin-bottom: 10px;
 }
 
 .list-box .danger-item {
   background: #fff1f2;
   border: 1px solid #fecdd3;
   color: #9f1239;
+  padding: 12px;
+  border-radius: 12px;
+  margin-bottom: 10px;
 }
 
-.list-box .empty-state {
+.list-box .empty-state,
+.empty-state {
   background: #f8fafc;
   border: 1px dashed #cbd5e1;
   color: #64748b;
+  padding: 14px;
+  border-radius: 12px;
 }
 
 .stats-grid {
@@ -324,16 +407,16 @@ select:focus {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 16px;
+  margin-top: 12px;
 }
 
 .small-btn {
   border: none;
-  border-radius: 12px;
-  padding: 10px 14px;
+  border-radius: 10px;
+  padding: 9px 12px;
   cursor: pointer;
   font-size: 13px;
-  font-weight: 700;
+  font-weight: bold;
 }
 
 .pay-btn {
@@ -347,22 +430,12 @@ select:focus {
 }
 
 .open-btn {
-  background: #005fa8;
+  background: #005195;
   color: white;
 }
 
 .delete-btn {
-  background: #c21f24;
-  color: white;
-}
-
-.edit-btn {
-  background: #7c3aed;
-  color: white;
-}
-
-.receipt-save-btn {
-  background: #0f766e;
+  background: #b91c1c;
   color: white;
 }
 
@@ -381,109 +454,24 @@ select:focus {
 }
 
 .installments-box {
-  margin-top: 16px;
-  padding: 14px;
+  margin-top: 12px;
+  padding: 12px;
   background: #f8fbff;
   border: 1px solid #dbe5ef;
-  border-radius: 16px;
+  border-radius: 12px;
 }
 
 .installment-row {
   display: flex;
   justify-content: space-between;
-  gap: 16px;
+  gap: 8px;
   flex-wrap: wrap;
-  padding: 16px 0;
+  padding: 8px 0;
   border-bottom: 1px solid #e5eef7;
 }
 
 .installment-row:last-child {
   border-bottom: none;
-}
-
-.installment-main {
-  flex: 1;
-  min-width: 0;
-}
-
-.installment-title {
-  font-size: 17px;
-  font-weight: 700;
-  margin-bottom: 10px;
-}
-
-.installment-date-editor {
-  display: grid;
-  grid-template-columns: auto minmax(145px, 190px) auto;
-  gap: 8px;
-  align-items: center;
-  margin: 12px 0;
-}
-
-.installment-date-editor label {
-  font-size: 13px;
-  font-weight: 700;
-  color: #475569;
-}
-
-.installment-date-editor input {
-  padding: 9px;
-  background: white;
-}
-
-.installment-payment-action {
-  display: flex;
-  align-items: flex-start;
-}
-
-.paid-installment-label {
-  display: inline-block;
-  padding: 9px 12px;
-  border-radius: 10px;
-  background: #dcfce7;
-  color: #166534;
-  font-weight: 700;
-}
-
-.receipt-upload {
-  margin-top: 14px;
-  padding: 12px;
-  border: 1px dashed #b8c8d8;
-  border-radius: 12px;
-  background: white;
-}
-
-.receipt-upload input[type="file"] {
-  margin-top: 8px;
-}
-
-.receipt-file-label {
-  display: block;
-  font-size: 13px;
-  font-weight: 700;
-  color: #334155;
-}
-
-.receipt-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
-}
-
-.receipt-status {
-  margin-top: 10px;
-  padding: 9px 11px;
-  border-radius: 10px;
-  background: #dcfce7;
-  color: #166534;
-  font-size: 13px;
-  overflow-wrap: anywhere;
-}
-
-.receipt-missing {
-  background: #f1f5f9;
-  color: #64748b;
 }
 
 .summary-strip {
@@ -498,6 +486,28 @@ select:focus {
   color: #124a80;
 }
 
+/* BULK ACTION BAR */
+.bulk-bar {
+  position: sticky;
+  top: 70px;
+  z-index: 9;
+  background: #005195;
+  color: white;
+  padding: 12px 20px;
+  border-radius: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+  animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+  from { transform: translateY(-20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
 @media (max-width: 850px) {
   .grid-two {
     grid-template-columns: 1fr;
@@ -505,6 +515,12 @@ select:focus {
 }
 
 @media (max-width: 700px) {
+  .topbar-content {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
   .topbar h1 {
     font-size: 24px;
   }
@@ -513,19 +529,9 @@ select:focus {
     justify-content: center;
   }
 
-  .navbar button {
-    padding: 12px 18px;
-  }
-
-  .installment-date-editor {
-    grid-template-columns: 1fr;
-  }
-
-  .installment-date-editor input,
-  .installment-date-editor button,
-  .receipt-actions button,
-  .installment-payment-action,
-  .installment-payment-action button {
-    width: 100%;
+  .bulk-bar {
+    flex-direction: column;
+    gap: 10px;
+    align-items: flex-start;
   }
 }

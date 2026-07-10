@@ -3,33 +3,190 @@ let fatture = JSON.parse(localStorage.getItem("fatture")) || [];
 let autoletture = JSON.parse(localStorage.getItem("autoletture")) || [];
 
 const DB_NAME = "utenzeManagerDB";
-const DB_VERSION = 2;
+const DB_VERSION = 1;
 const PDF_STORE = "pdfFiles";
-const RECEIPT_STORE = "paymentReceipts";
-
 let db = null;
 let monthlyChart = null;
 let utilityTypeChart = null;
+let selectedFattureIds = new Set(); 
+
+// --- GESTIONE CLOUD SYNC & AI ---
+const SyncManager = {
+  config: JSON.parse(localStorage.getItem("syncConfig")) || { url: "", secret: "" },
+  
+  saveConfig(url, secret) {
+    this.config = { url: url.replace(/\/$/, ""), secret };
+    localStorage.setItem("syncConfig", JSON.stringify(this.config));
+    this.pullData();
+  },
+
+  updateStatus(status) {
+    const icon = document.getElementById("syncStatusIcon");
+    if (!icon) return;
+    icon.className = `sync-status ${status}`;
+  },
+
+  async pushData() {
+    if (!this.config.url || !this.config.secret) return;
+    this.updateStatus('syncing');
+    try {
+      const payload = { utenze, fatture, autoletture, timestamp: Date.now() };
+      const res = await fetch(`${this.config.url}/sync/data`, {
+        method: 'POST',
+        headers: { 
+          'Authorization': `Bearer ${this.config.secret}`, 
+          'Content-Type': 'application/json' 
+        },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) throw new Error("Sync upload failed");
+      this.updateStatus('idle');
+    } catch (e) {
+      console.error(e);
+      this.updateStatus('error');
+    }
+  },
+
+  async pullData() {
+    if (!this.config.url || !this.config.secret) return;
+    this.updateStatus('syncing');
+    try {
+      const res = await fetch(`${this.config.url}/sync/data`, {
+        headers: { 'Authorization': `Bearer ${this.config.secret}` }
+      });
+      if (!res.ok) throw new Error("Sync download failed");
+      
+      const data = await res.json();
+      if (data && data.timestamp) {
+        utenze = data.utenze || [];
+        fatture = data.fatture || [];
+        autoletture = data.autoletture || [];
+        saveData(false);
+        refreshAll();
+      }
+      this.updateStatus('idle');
+    } catch (e) {
+      console.error(e);
+      this.updateStatus('error');
+    }
+  },
+
+  async pushPdf(id, file) {
+    if (!this.config.url || !this.config.secret) return;
+    this.updateStatus('syncing');
+    try {
+      await fetch(`${this.config.url}/sync/pdf/${id}`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${this.config.secret}` },
+        body: file
+      });
+      this.updateStatus('idle');
+    } catch(e) { 
+      this.updateStatus('error'); 
+    }
+  },
+
+  async getPdf(id) {
+    if (!this.config.url || !this.config.secret) return null;
+    try {
+      const res = await fetch(`${this.config.url}/sync/pdf/${id}`, {
+        headers: { 'Authorization': `Bearer ${this.config.secret}` }
+      });
+      if (!res.ok) return null;
+      return await res.blob();
+    } catch(e) { return null; }
+  },
+
+  async deletePdf(id) {
+    if (!this.config.url || !this.config.secret) return;
+    try {
+      await fetch(`${this.config.url}/sync/pdf/${id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${this.config.secret}` }
+      });
+    } catch(e) {}
+  },
+
+  async extractDataFromText(text) {
+    if (!this.config.url || !this.config.secret) {
+      alert("Configura prima il Cloudflare Worker nelle impostazioni Cloud.");
+      return null;
+    }
+    this.updateStatus('syncing');
+    try {
+      const res = await fetch(`${this.config.url}/sync/extract`, {
+        method: 'POST',
+        headers: { 
+          'Authorization': `Bearer ${this.config.secret}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ text })
+      });
+      if (!res.ok) throw new Error("Errore chiamata AI");
+      const data = await res.json();
+      this.updateStatus('idle');
+      return data;
+    } catch(e) { 
+      console.error(e);
+      this.updateStatus('error'); 
+      return null;
+    }
+  }
+};
+
+function saveSyncConfig() {
+  let rawUrl = document.getElementById("syncUrl").value.trim();
+  const secret = document.getElementById("syncSecret").value.trim();
+  
+  const urlMatch = rawUrl.match(/(https?:\/\/[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?:\/[^\s)]*)?)/);
+  const cleanUrl = urlMatch ? urlMatch[1] : rawUrl;
+  
+  document.getElementById("syncUrl").value = cleanUrl;
+
+  if (!cleanUrl || !secret) {
+    alert("Compila URL del Worker e Token di sicurezza.");
+    return;
+  }
+  SyncManager.saveConfig(cleanUrl, secret);
+  alert("Configurazione Cloud salvata e download avviato.");
+}
 
 async function initApp() {
-  try {
-    await initDB();
-    normalizeStoredData();
-    autoCreateUtilitiesFromInvoices();
-    populateFilterOptions();
-    refreshAll();
-    showSection("dashboard");
-    controllaENotificaScadenze(false);
-  } catch (error) {
-    console.error("Errore inizializzazione app:", error);
-    alert("Errore durante l'avvio dell'app.");
+  await initDB();
+  normalizeStoredData();
+  
+  if (SyncManager.config.url) {
+    const retroCleanUrl = SyncManager.config.url.match(/(https?:\/\/[^\s)]+)/)?.[1] || SyncManager.config.url;
+    
+    document.getElementById("syncUrl").value = retroCleanUrl;
+    document.getElementById("syncSecret").value = SyncManager.config.secret ? "********" : "";
+    
+    if (retroCleanUrl !== SyncManager.config.url) {
+      SyncManager.saveConfig(retroCleanUrl, SyncManager.config.secret);
+    } else {
+      await SyncManager.pullData();
+    }
   }
+
+  autoCreateUtilitiesFromInvoices();
+  populateFilterOptions();
+  renderUtenze();
+  renderFatture();
+  renderScadenze();
+  renderRateProssime();
+  renderAutoletture();
+  renderAutolettureProssime();
+  renderNotifiche();
+  renderStats();
+  renderMonthlyChart();
+  renderUtilityTypeChart();
+  showSection("dashboard");
+  controllaENotificaScadenze(false);
 }
 
 function normalizeStoredData() {
   fatture = fatture.map((f) => {
     const text = `${f.fornitore || ""} ${f.numeroFattura || ""} ${f.periodoFattura || ""}`;
-
     const inferredType =
       f.tipoFattura ||
       detectUtilityType(text) ||
@@ -43,27 +200,24 @@ function normalizeStoredData() {
       pagata: false,
       ...f,
       tipoFattura: inferredType,
-      rate: Array.isArray(f.rate)
-        ? f.rate.map((r, index) => ({
-            numero: index + 1,
-            pagata: false,
-            ...r,
-            receiptMeta: r.receiptMeta || null
-          }))
-        : [],
+      rate: Array.isArray(f.rate) ? f.rate : [],
       rateizzata: !!f.rateizzata,
       archiviata: !!f.archiviata,
       pagata: !!f.pagata
     };
   });
 
-  saveData();
+  saveData(false);
 }
 
-function saveData() {
+function saveData(triggerCloudSync = true) {
   localStorage.setItem("utenze", JSON.stringify(utenze));
   localStorage.setItem("fatture", JSON.stringify(fatture));
   localStorage.setItem("autoletture", JSON.stringify(autoletture));
+  
+  if (triggerCloudSync) {
+    SyncManager.pushData();
+  }
 }
 
 function refreshAll() {
@@ -81,30 +235,57 @@ function refreshAll() {
   renderUtilityTypeChart();
 }
 
+// --- DEEP LINKING ---
 function showSection(id) {
   document.querySelectorAll(".section").forEach((section) => {
     section.classList.add("hidden");
   });
+  document.getElementById(id).classList.remove("hidden");
+  clearSelection(); 
+}
 
-  const target = document.getElementById(id);
-  if (target) target.classList.remove("hidden");
+function jumpToFattura(fatturaId) {
+  resetFilters(false);
+  document.getElementById("filterStatus").value = "dapagare";
+  
+  const f = fatture.find(fat => fat.id === fatturaId);
+  if (f) {
+    document.getElementById("searchText").value = f.fornitore;
+  }
+  
+  showSection("archivio");
+  applyFilters();
+}
+
+function jumpToAutolettura(contatoreName) {
+  showSection("autoletture");
+  document.getElementById("contatore").value = contatoreName;
+  document.getElementById("dataAutolettura").value = new Date().toISOString().split("T")[0];
+  document.getElementById("contatore").focus();
 }
 
 function openArchiveFromDashboard(mode) {
   resetFilters(false);
 
   const filterStatus = document.getElementById("filterStatus");
-
   if (mode === "pagata") filterStatus.value = "pagata";
   if (mode === "dapagare") filterStatus.value = "dapagare";
   if (mode === "archiviata") filterStatus.value = "archiviata";
   if (mode === "rateizzata") filterStatus.value = "rateizzata";
-  if (mode === "rateizzatadaPagare") {
-    filterStatus.value = "rateizzatadaPagare";
-  }
+  if (mode === "rateizzatadaPagare") filterStatus.value = "rateizzatadaPagare";
 
   showSection("archivio");
   renderFatture();
+}
+
+function jumpToArchiveWithFilters(filters) {
+  resetFilters(false);
+  if (filters.year) document.getElementById("filterYear").value = filters.year;
+  if (filters.month) document.getElementById("filterMonth").value = filters.month;
+  if (filters.tipo) document.getElementById("filterTipo").value = filters.tipo;
+
+  showSection("archivio");
+  applyFilters();
 }
 
 function escapeHtml(value) {
@@ -118,90 +299,30 @@ function escapeHtml(value) {
 
 function formatDate(dateString) {
   if (!dateString) return "-";
-
-  const date = new Date(`${dateString}T00:00:00`);
-
-  if (Number.isNaN(date.getTime())) {
-    return dateString;
-  }
-
+  const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) return dateString;
   return date.toLocaleDateString("it-IT");
 }
 
 function daysDiffFromToday(dateString) {
-  if (!dateString) return Number.POSITIVE_INFINITY;
-
   const oggi = new Date();
   oggi.setHours(0, 0, 0, 0);
 
-  const data = new Date(`${dateString}T00:00:00`);
+  const data = new Date(dateString);
   data.setHours(0, 0, 0, 0);
 
-  return Math.ceil(
-    (data.getTime() - oggi.getTime()) /
-      (1000 * 60 * 60 * 24)
-  );
-}
-
-function convertiDataPerInput(dataStr) {
-  if (!dataStr) return "";
-
-  if (/^\d{4}-\d{2}-\d{2}$/.test(dataStr)) {
-    return dataStr;
-  }
-
-  const parts = dataStr.split(/[\/\-\.]/);
-
-  if (parts.length === 3) {
-    const [day, month, year] = parts;
-
-    if (year.length === 4) {
-      return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
-    }
-  }
-
-  return "";
+  return Math.ceil((data.getTime() - oggi.getTime()) / (1000 * 60 * 60 * 24));
 }
 
 function parseMoney(value) {
-  if (typeof value !== "string") {
-    value = String(value ?? "");
-  }
-
-  let normalized = value
-    .replace(/\s/g, "")
-    .replace(/[€]/g, "");
-
-  if (normalized.includes(",") && normalized.includes(".")) {
-    if (normalized.lastIndexOf(",") > normalized.lastIndexOf(".")) {
-      normalized = normalized.replace(/\./g, "").replace(",", ".");
-    } else {
-      normalized = normalized.replace(/,/g, "");
-    }
-  } else if (normalized.includes(",")) {
-    normalized = normalized.replace(",", ".");
-  }
-
-  normalized = normalized.replace(/[^\d.-]/g, "");
-
+  if (typeof value !== "string") value = String(value ?? "");
+  const normalized = value.replace(/\./g, "").replace(",", ".").replace(/[^\d.]/g, "");
   const num = parseFloat(normalized);
   return Number.isFinite(num) ? num : 0;
 }
 
 function formatMoney(num) {
-  return Number(num || 0).toFixed(2);
-}
-
-function trovaMatch(testo, patterns, groupIndex = 1) {
-  for (const pattern of patterns) {
-    const match = testo.match(pattern);
-
-    if (match && match[groupIndex]) {
-      return match[groupIndex].trim();
-    }
-  }
-
-  return "";
+  return Number(num).toFixed(2);
 }
 
 function getProviderIcon(name) {
@@ -226,329 +347,93 @@ function getProviderIcon(name) {
   return "🏢";
 }
 
-function detectProvider(text, fileName = "") {
-  const source = `${text} ${fileName}`.toLowerCase();
-
-  const providerMap = [
-    {
-      name: "Enel",
-      patterns: [
-        "enel energia",
-        "servizio elettrico nazionale",
-        "enel"
-      ]
-    },
-    {
-      name: "Plenitude",
-      patterns: [
-        "eni plenitude",
-        "plenitude",
-        "eni gas e luce"
-      ]
-    },
-    {
-      name: "Acea",
-      patterns: [
-        "acea ato 5",
-        "acea ato",
-        "acea acqua",
-        "acea energia",
-        "acea ambiente",
-        "acea"
-      ]
-    },
-    { name: "Fastweb", patterns: ["fastweb"] },
-    { name: "TIM", patterns: ["telecom italia", "tim s.p.a", "tim"] },
-    { name: "Vodafone", patterns: ["vodafone"] },
-    { name: "Iliad", patterns: ["iliad"] },
-    { name: "WindTre", patterns: ["windtre", "wind tre"] },
-    { name: "Italgas", patterns: ["italgas"] },
-    { name: "A2A", patterns: ["a2a energia", "a2a"] },
-    { name: "Sorgenia", patterns: ["sorgenia"] },
-    { name: "Edison", patterns: ["edison energia", "edison"] },
-    { name: "Hera", patterns: ["gruppo hera", "hera comm", "hera"] },
-    { name: "Sky Wifi", patterns: ["sky wifi"] },
-    {
-      name: "E-distribuzione",
-      patterns: ["e-distribuzione", "edistribuzione"]
-    },
-    {
-      name: "Acquedotto",
-      patterns: [
-        "servizio idrico integrato",
-        "servizio idrico",
-        "acquedotto"
-      ]
-    }
-  ];
-
-  for (const provider of providerMap) {
-    if (provider.patterns.some((pattern) => source.includes(pattern))) {
-      return provider.name;
-    }
-  }
-
-  return "";
-}
-
 function detectUtilityType(text) {
-  const source = ` ${String(text || "").toLowerCase()} `;
-
-  const scores = {
-    Luce: 0,
-    Gas: 0,
-    Acqua: 0,
-    Internet: 0,
-    Telefono: 0,
-    Rifiuti: 0
-  };
-
-  const addScore = (type, points, patterns) => {
-    patterns.forEach((pattern) => {
-      if (pattern.test(source)) {
-        scores[type] += points;
-      }
-    });
-  };
-
-  addScore("Luce", 5, [
-    /\bpod\b/i,
-    /\bkwh\b/i,
-    /energia elettrica/i,
-    /fornitura elettrica/i,
-    /potenza impegnata/i,
-    /fascia f1/i,
-    /fascia f2/i,
-    /fascia f3/i,
-    /contatore elettrico/i
-  ]);
-
-  addScore("Gas", 5, [
-    /\bpdr\b/i,
-    /\bsmc\b/i,
-    /gas naturale/i,
-    /metano/i,
-    /coefficiente c/i,
-    /potere calorifico/i,
-    /contatore gas/i
-  ]);
-
-  addScore("Acqua", 5, [
-    /servizio idrico/i,
-    /acquedotto/i,
-    /fognatura/i,
-    /depurazione/i,
-    /metri cubi acqua/i,
-    /consumo idrico/i,
-    /utenza idrica/i
-  ]);
-
-  addScore("Internet", 5, [
-    /\bftth\b/i,
-    /\bfttc\b/i,
-    /\badsl\b/i,
-    /fibra/i,
-    /banda larga/i,
-    /connessione internet/i,
-    /modem/i,
-    /router/i
-  ]);
-
-  addScore("Telefono", 5, [
-    /telefonia mobile/i,
-    /telefonia fissa/i,
-    /\bsim\b/i,
-    /traffico voce/i,
-    /numero mobile/i,
-    /minuti inclusi/i,
-    /\bgiga\b/i
-  ]);
-
-  addScore("Rifiuti", 5, [
-    /\btari\b/i,
-    /tassa rifiuti/i,
-    /igiene urbana/i,
-    /raccolta rifiuti/i
-  ]);
-
-  addScore("Luce", 2, [
-    /\bluce\b/i,
-    /elettric/i,
-    /servizio elettrico/i
-  ]);
-
-  addScore("Gas", 2, [
-    /\bgas\b/i
-  ]);
-
-  addScore("Acqua", 2, [
-    /\bacqua\b/i,
-    /\bidrico\b/i
-  ]);
-
-  const ordered = Object.entries(scores)
-    .sort((a, b) => b[1] - a[1]);
-
-  if (!ordered.length || ordered[0][1] === 0) {
-    return "";
-  }
+  const source = (text || "").toLowerCase();
 
   if (
-    ordered.length > 1 &&
-    ordered[0][1] === ordered[1][1]
-  ) {
-    return "";
-  }
-
-  return ordered[0][0];
-}
-
-function riconosciTipoDaFornitore(nome) {
-  const valore = (nome || "").toLowerCase();
-
-  if (
-    valore.includes("servizio elettrico") ||
-    valore.includes("e-distribuzione")
+    source.includes("pod") ||
+    source.includes("energia elettrica") ||
+    source.includes("fornitura elettrica") ||
+    source.includes("kwh") ||
+    source.includes("elettric") ||
+    source.includes("luce") ||
+    source.includes("contatore elettrico")
   ) {
     return "Luce";
   }
 
-  if (valore.includes("italgas")) {
+  if (
+    source.includes("pdr") ||
+    source.includes("smc") ||
+    source.includes("standard metri cubi") ||
+    source.includes("gas naturale") ||
+    source.includes("metano") ||
+    source.includes("gas")
+  ) {
     return "Gas";
   }
 
   if (
-    valore.includes("acquedotto") ||
-    valore.includes("servizio idrico")
+    source.includes("mc acqua") ||
+    source.includes("servizio idrico") ||
+    source.includes("idrico") ||
+    source.includes("acqua") ||
+    source.includes("acquedotto")
   ) {
     return "Acqua";
   }
 
   if (
-    valore.includes("fastweb") ||
-    valore.includes("sky wifi")
+    source.includes("fibra") ||
+    source.includes("internet") ||
+    source.includes("adsl") ||
+    source.includes("fttc") ||
+    source.includes("ftth") ||
+    source.includes("banda larga")
   ) {
     return "Internet";
   }
 
   if (
-    valore.includes("tim") ||
-    valore.includes("vodafone") ||
-    valore.includes("wind") ||
-    valore.includes("iliad") ||
-    valore.includes("telecom")
+    source.includes("telefono") ||
+    source.includes("mobile") ||
+    source.includes("sim") ||
+    source.includes("voce") ||
+    source.includes("telefonia")
   ) {
     return "Telefono";
+  }
+
+  if (
+    source.includes("tari") ||
+    source.includes("rifiuti") ||
+    source.includes("igiene urbana")
+  ) {
+    return "Rifiuti";
   }
 
   return "";
 }
 
-function detectRatePlan(text) {
-  const source = String(text || "")
-    .replace(/\s+/g, " ")
-    .trim();
+function riconosciTipoDaFornitore(nome) {
+  const valore = (nome || "").toLowerCase();
 
-  const lower = source.toLowerCase();
+  if (valore.includes("enel") || valore.includes("servizio elettrico") || valore.includes("a2a energia") || valore.includes("sorgenia") || valore.includes("edison energia") || valore.includes("e-distribuzione")) return "Luce";
+  if (valore.includes("eni") || valore.includes("plenitude") || valore.includes("italgas") || valore.includes("gas")) return "Gas";
+  if (valore.includes("acea") || valore.includes("acqua") || valore.includes("idrico") || valore.includes("acquedotto")) return "Acqua";
+  if (valore.includes("fastweb") || valore.includes("sky wifi")) return "Internet";
+  if (valore.includes("tim") || valore.includes("vodafone") || valore.includes("wind") || valore.includes("iliad") || valore.includes("telecom")) return "Telefono";
+  if (valore.includes("rifiuti") || valore.includes("ambiente") || valore.includes("tari")) return "Rifiuti";
 
-  const hasRateKeywords =
-    lower.includes("piano di rientro") ||
-    lower.includes("piano rate") ||
-    lower.includes("rateizzazione") ||
-    lower.includes("pagamento rateale") ||
-    lower.includes("numero rata") ||
-    lower.includes("scadenza rata");
-
-  const rowRegex =
-    /(?:rata\s*)?(\d{1,2})(?:\s*(?:di|\/)\s*\d{1,2})?\s*(?:[-–—:|]\s*)?(?:€\s*)?(\d{1,3}(?:\.\d{3})*,\d{2}|\d+[.,]\d{2})\s*(?:€)?\s*(?:[-–—:|]\s*)?(\d{2}[\/\-.]\d{2}[\/\-.]\d{4})/gi;
-
-  const rows = [];
-  let match;
-
-  while ((match = rowRegex.exec(source)) !== null) {
-    rows.push({
-      numero: parseInt(match[1], 10),
-      importo: formatMoney(parseMoney(match[2])),
-      scadenza: convertiDataPerInput(match[3]),
-      pagata: false
-    });
-  }
-
-  const uniqueRows = [];
-  const seen = new Set();
-
-  rows.forEach((row) => {
-    const key = `${row.numero}-${row.importo}-${row.scadenza}`;
-
-    if (
-      row.numero > 0 &&
-      row.importo &&
-      row.scadenza &&
-      !seen.has(key)
-    ) {
-      seen.add(key);
-      uniqueRows.push(row);
-    }
-  });
-
-  uniqueRows.sort((a, b) => a.numero - b.numero);
-
-  let numeroRate = uniqueRows.length;
-  let importoRata = uniqueRows[0]?.importo || "";
-  let primaScadenzaRata = uniqueRows[0]?.scadenza || "";
-
-  if (!numeroRate) {
-    const numeroMatch =
-      source.match(/numero\s+(?:delle\s+)?rate\s*[:\-]?\s*(\d{1,2})/i) ||
-      source.match(/totale\s+rate\s*[:\-]?\s*(\d{1,2})/i) ||
-      source.match(/(?:in|di)\s+(\d{1,2})\s+rate/i);
-
-    if (numeroMatch) {
-      numeroRate = parseInt(numeroMatch[1], 10);
-    }
-  }
-
-  if (!importoRata) {
-    const importoMatch =
-      source.match(/importo\s+(?:della\s+)?rata\s*[:\-]?\s*€?\s*(\d{1,3}(?:\.\d{3})*,\d{2}|\d+[.,]\d{2})/i) ||
-      source.match(/rata\s+da\s*€?\s*(\d{1,3}(?:\.\d{3})*,\d{2}|\d+[.,]\d{2})/i);
-
-    if (importoMatch) {
-      importoRata = formatMoney(parseMoney(importoMatch[1]));
-    }
-  }
-
-  if (!primaScadenzaRata) {
-    const firstDeadlineMatch =
-      source.match(/prima\s+scadenza(?:\s+rata)?\s*[:\-]?\s*(\d{2}[\/\-.]\d{2}[\/\-.]\d{4})/i) ||
-      source.match(/scadenza\s+rata\s*[:\-]?\s*(\d{2}[\/\-.]\d{2}[\/\-.]\d{4})/i);
-
-    if (firstDeadlineMatch) {
-      primaScadenzaRata = convertiDataPerInput(firstDeadlineMatch[1]);
-    }
-  }
-
-  return {
-    rateizzata:
-      hasRateKeywords ||
-      uniqueRows.length >= 2 ||
-      numeroRate >= 2,
-    numeroRate,
-    importoRata,
-    primaScadenzaRata,
-    rate: uniqueRows
-  };
+  return "";
 }
 
 function utilityExists(nome, tipo) {
-  return utenze.some((u) => {
-    return (
-      (u.nome || "").trim().toLowerCase() ===
-        (nome || "").trim().toLowerCase() &&
-      (u.tipo || "").trim().toLowerCase() ===
-        (tipo || "").trim().toLowerCase()
-    );
-  });
+  return utenze.some(
+    (u) =>
+      (u.nome || "").trim().toLowerCase() === (nome || "").trim().toLowerCase() &&
+      (u.tipo || "").trim().toLowerCase() === (tipo || "").trim().toLowerCase()
+  );
 }
 
 function autoCreateUtilitiesFromInvoices() {
@@ -556,11 +441,7 @@ function autoCreateUtilitiesFromInvoices() {
 
   fatture.forEach((f) => {
     const nome = (f.fornitore || "").trim();
-    const tipo = (
-      f.tipoFattura ||
-      riconosciTipoDaFornitore(nome) ||
-      "Altro"
-    ).trim();
+    const tipo = (f.tipoFattura || riconosciTipoDaFornitore(nome) || "Altro").trim();
 
     if (nome && !utilityExists(nome, tipo)) {
       utenze.push({
@@ -569,7 +450,6 @@ function autoCreateUtilitiesFromInvoices() {
         tipo,
         origin: "fattura"
       });
-
       changed = true;
     }
   });
@@ -578,12 +458,132 @@ function autoCreateUtilitiesFromInvoices() {
 }
 
 function toggleRateFields() {
-  const checked =
-    document.getElementById("rateizzata").checked;
+  const checked = document.getElementById("rateizzata").checked;
+  const fields = document.getElementById("rateFields");
+  fields.classList.toggle("hidden", !checked);
+}
 
-  document
-    .getElementById("rateFields")
-    .classList.toggle("hidden", !checked);
+// --- UTENZE CRUD ---
+function resetUtenzaForm() {
+  document.getElementById("editUtenzaId").value = "";
+  document.getElementById("nomeUtenza").value = "";
+  document.getElementById("tipoUtenza").value = "";
+  
+  document.getElementById("utenzaFormTitle").textContent = "Nuova Utenza";
+  document.getElementById("btnSalvaUtenza").textContent = "Salva utenza";
+  document.getElementById("btnAnnullaUtenza").classList.add("hidden");
+  document.getElementById("btnEliminaUtenza").classList.add("hidden");
+}
+
+function editUtenza(id) {
+  const u = utenze.find(item => item.id === id);
+  if (!u) return;
+
+  document.getElementById("editUtenzaId").value = u.id;
+  document.getElementById("nomeUtenza").value = u.nome;
+  document.getElementById("tipoUtenza").value = u.tipo || "";
+  
+  document.getElementById("utenzaFormTitle").textContent = "Modifica Utenza";
+  document.getElementById("btnSalvaUtenza").textContent = "Aggiorna utenza";
+  document.getElementById("btnAnnullaUtenza").classList.remove("hidden");
+  document.getElementById("btnEliminaUtenza").classList.remove("hidden");
+  
+  document.getElementById("nomeUtenza").focus();
+}
+
+function deleteEditingUtenza() {
+  const idStr = document.getElementById("editUtenzaId").value;
+  if (!idStr) return;
+  const id = parseInt(idStr, 10);
+  
+  const conferma = confirm("Vuoi eliminare definitivamente questa utenza?");
+  if (!conferma) return;
+  
+  utenze = utenze.filter(u => u.id !== id);
+  saveData();
+  renderUtenze();
+  resetUtenzaForm();
+}
+
+function saveUtenza() {
+  const editIdStr = document.getElementById("editUtenzaId").value;
+  const nome = document.getElementById("nomeUtenza").value.trim();
+  const tipo = document.getElementById("tipoUtenza").value;
+
+  if (!nome || !tipo) {
+    alert("Compila nome fornitore e tipo utenza.");
+    return;
+  }
+
+  if (editIdStr) {
+    const id = parseInt(editIdStr, 10);
+    const index = utenze.findIndex(u => u.id === id);
+    if (index !== -1) {
+      const exists = utenze.some(u => 
+        u.id !== id && 
+        u.nome.toLowerCase() === nome.toLowerCase() && 
+        u.tipo.toLowerCase() === tipo.toLowerCase()
+      );
+      if (exists) {
+        alert("Questa utenza esiste già.");
+        return;
+      }
+      
+      utenze[index].nome = nome;
+      utenze[index].tipo = tipo;
+    }
+  } else {
+    if (utilityExists(nome, tipo)) {
+      alert("Questa utenza esiste già.");
+      return;
+    }
+    utenze.push({
+      id: Date.now(),
+      nome,
+      tipo,
+      origin: "manuale"
+    });
+  }
+
+  saveData();
+  renderUtenze();
+  resetUtenzaForm();
+}
+
+function renderUtenze() {
+  const ul = document.getElementById("listaUtenze");
+  ul.innerHTML = "";
+
+  if (utenze.length === 0) {
+    ul.innerHTML = "<li class='empty-state'>Nessuna utenza inserita.</li>";
+    return;
+  }
+
+  const utenzeOrdinate = [...utenze].sort((a, b) =>
+    `${a.nome} ${a.tipo}`.localeCompare(`${b.nome} ${b.tipo}`, "it")
+  );
+
+  utenzeOrdinate.forEach((u) => {
+    const icon = getProviderIcon(u.nome);
+    const li = document.createElement("li");
+    li.className = "clickable-item";
+    li.onclick = () => editUtenza(u.id);
+    
+    li.innerHTML = `
+      <div class="bill-header">
+        <div class="provider-inline">
+          <span class="provider-icon">${icon}</span>
+          <div>
+            <strong>${escapeHtml(u.nome)}</strong>
+            <div class="small-text">Tipo: ${escapeHtml(u.tipo)}</div>
+            <div class="small-text">Origine: ${u.origin === "fattura" ? "Creata da fattura" : "Inserita manualmente"}</div>
+          </div>
+        </div>
+        <div class="small-text">✎ Modifica</div>
+      </div>
+    `;
+    ul.appendChild(li);
+  });
 }
 
 function clearFatturaForm() {
@@ -599,7 +599,6 @@ function clearFatturaForm() {
   document.getElementById("importoRata").value = "";
   document.getElementById("primaScadenzaRata").value = "";
   document.getElementById("frequenzaRate").value = "mensile";
-
   toggleRateFields();
 }
 
@@ -611,172 +610,44 @@ function clearAutoletturaForm() {
 }
 
 function addMonths(dateString, monthsToAdd) {
-  const [year, month, day] =
-    dateString.split("-").map(Number);
-
-  const result = new Date(year, month - 1, day);
-  const originalDay = result.getDate();
-
-  result.setMonth(result.getMonth() + monthsToAdd);
-
-  if (result.getDate() < originalDay) {
-    result.setDate(0);
-  }
-
-  const yyyy = result.getFullYear();
-  const mm = String(result.getMonth() + 1).padStart(2, "0");
-  const dd = String(result.getDate()).padStart(2, "0");
-
-  return `${yyyy}-${mm}-${dd}`;
+  const d = new Date(dateString);
+  const originalDay = d.getDate();
+  d.setMonth(d.getMonth() + monthsToAdd);
+  if (d.getDate() < originalDay) d.setDate(0);
+  return d.toISOString().split("T")[0];
 }
 
-function generaPianoRate(
-  numeroRate,
-  importoRata,
-  primaScadenza,
-  frequenza
-) {
+function generaPianoRate(numeroRate, importoRata, primaScadenza, frequenza) {
   const rate = [];
-
   for (let i = 0; i < numeroRate; i++) {
     let dataRata = primaScadenza;
-
-    if (frequenza === "mensile") {
-      dataRata = addMonths(primaScadenza, i);
-    }
+    if (frequenza === "mensile") dataRata = addMonths(primaScadenza, i);
 
     rate.push({
       numero: i + 1,
       importo: formatMoney(importoRata),
       scadenza: dataRata,
-      pagata: false,
-      receiptMeta: null
+      pagata: false
     });
   }
-
   return rate;
 }
 
-function addUtenza() {
-  const nome =
-    document.getElementById("nomeUtenza").value.trim();
-
-  const tipo =
-    document.getElementById("tipoUtenza").value;
-
-  if (!nome || !tipo) {
-    alert("Compila nome fornitore e tipo utenza.");
-    return;
-  }
-
-  if (utilityExists(nome, tipo)) {
-    alert("Questa utenza esiste già.");
-    return;
-  }
-
-  utenze.push({
-    id: Date.now(),
-    nome,
-    tipo,
-    origin: "manuale"
-  });
-
-  saveData();
-  renderUtenze();
-
-  document.getElementById("nomeUtenza").value = "";
-  document.getElementById("tipoUtenza").value = "";
-}
-
-function renderUtenze() {
-  const ul = document.getElementById("listaUtenze");
-  ul.innerHTML = "";
-
-  if (utenze.length === 0) {
-    ul.innerHTML = "<li>Nessuna utenza inserita.</li>";
-    return;
-  }
-
-  const utenzeOrdinate = [...utenze].sort((a, b) =>
-    `${a.nome} ${a.tipo}`.localeCompare(
-      `${b.nome} ${b.tipo}`,
-      "it"
-    )
-  );
-
-  utenzeOrdinate.forEach((u) => {
-    const icon = getProviderIcon(u.nome);
-    const li = document.createElement("li");
-
-    li.innerHTML = `
-      <div class="bill-header">
-        <div class="provider-inline">
-          <span class="provider-icon">${icon}</span>
-
-          <div>
-            <strong>${escapeHtml(u.nome)}</strong>
-
-            <div class="small-text">
-              Tipo: ${escapeHtml(u.tipo)}
-            </div>
-
-            <div class="small-text">
-              Origine:
-              ${
-                u.origin === "fattura"
-                  ? "Creata da fattura"
-                  : "Inserita manualmente"
-              }
-            </div>
-          </div>
-        </div>
-      </div>
-    `;
-
-    ul.appendChild(li);
-  });
-}
-
 async function addFattura() {
-  const fornitore =
-    document.getElementById("fornitore").value.trim();
-
-  const tipoFattura =
-    document.getElementById("tipoFattura").value;
-
-  const scadenza =
-    document.getElementById("scadenza").value;
-
-  const importo =
-    document.getElementById("importo").value.trim();
-
-  const numeroFattura =
-    document.getElementById("numeroFattura").value.trim();
-
-  const periodoFattura =
-    document.getElementById("periodoFattura").value.trim();
-
-  const pdfInput =
-    document.getElementById("pdf");
-
+  const fornitore = document.getElementById("fornitore").value.trim();
+  const tipoFattura = document.getElementById("tipoFattura").value;
+  const scadenza = document.getElementById("scadenza").value;
+  const importo = document.getElementById("importo").value.trim();
+  const numeroFattura = document.getElementById("numeroFattura").value.trim();
+  const periodoFattura = document.getElementById("periodoFattura").value.trim();
+  const pdfInput = document.getElementById("pdf");
   const file = pdfInput.files[0];
 
-  const rateizzata =
-    document.getElementById("rateizzata").checked;
-
-  const numeroRate = parseInt(
-    document.getElementById("numeroRate").value || "0",
-    10
-  );
-
-  let importoRata =
-    document.getElementById("importoRata").value.trim();
-
-  const primaScadenzaRata =
-    document.getElementById("primaScadenzaRata").value;
-
-  const frequenzaRate =
-    document.getElementById("frequenzaRate").value;
+  const rateizzata = document.getElementById("rateizzata").checked;
+  const numeroRate = parseInt(document.getElementById("numeroRate").value || "0", 10);
+  let importoRata = document.getElementById("importoRata").value.trim();
+  const primaScadenzaRata = document.getElementById("primaScadenzaRata").value;
+  const frequenzaRate = document.getElementById("frequenzaRate").value;
 
   if (!fornitore || !scadenza || !importo) {
     alert("Compila almeno fornitore, scadenza e importo.");
@@ -784,27 +655,17 @@ async function addFattura() {
   }
 
   if (rateizzata) {
-    if (
-      !numeroRate ||
-      numeroRate < 2 ||
-      !primaScadenzaRata
-    ) {
-      alert(
-        "Per la rateizzazione devi compilare numero rate e prima scadenza."
-      );
+    if (!numeroRate || numeroRate < 2 || !primaScadenzaRata) {
+      alert("Per la rateizzazione devi compilare numero rate e prima scadenza.");
       return;
     }
 
     if (!importoRata) {
       const totale = parseMoney(importo);
-
       if (!totale) {
-        alert(
-          "Importo totale non valido per calcolare automaticamente le rate."
-        );
+        alert("Importo totale non valido per calcolare automaticamente le rate.");
         return;
       }
-
       importoRata = formatMoney(totale / numeroRate);
     }
   }
@@ -814,7 +675,6 @@ async function addFattura() {
 
   if (file) {
     await savePdfToDB(id, file);
-
     pdfMeta = {
       name: file.name,
       type: file.type || "application/pdf",
@@ -824,19 +684,12 @@ async function addFattura() {
 
   const tipoFinale =
     tipoFattura ||
-    detectUtilityType(
-      `${fornitore} ${numeroFattura} ${periodoFattura}`
-    ) ||
+    detectUtilityType(`${fornitore} ${numeroFattura} ${periodoFattura}`) ||
     riconosciTipoDaFornitore(fornitore) ||
     "Altro";
 
   const rate = rateizzata
-    ? generaPianoRate(
-        numeroRate,
-        parseMoney(importoRata),
-        primaScadenzaRata,
-        frequenzaRate
-      )
+    ? generaPianoRate(numeroRate, parseMoney(importoRata), primaScadenzaRata, frequenzaRate)
     : [];
 
   fatture.push({
@@ -844,7 +697,7 @@ async function addFattura() {
     fornitore,
     tipoFattura: tipoFinale,
     scadenza,
-    importo: formatMoney(parseMoney(importo)),
+    importo,
     numeroFattura,
     periodoFattura,
     pdfMeta,
@@ -852,15 +705,9 @@ async function addFattura() {
     archiviata: false,
     rateizzata,
     numeroRate: rateizzata ? numeroRate : 0,
-    importoRata: rateizzata
-      ? formatMoney(parseMoney(importoRata))
-      : "",
-    primaScadenzaRata: rateizzata
-      ? primaScadenzaRata
-      : "",
-    frequenzaRate: rateizzata
-      ? frequenzaRate
-      : "",
+    importoRata: rateizzata ? formatMoney(parseMoney(importoRata)) : "",
+    primaScadenzaRata: rateizzata ? primaScadenzaRata : "",
+    frequenzaRate: rateizzata ? frequenzaRate : "",
     rate,
     createdAt: new Date().toISOString()
   });
@@ -873,97 +720,108 @@ async function addFattura() {
 }
 
 function hasUnpaidInstallments(f) {
-  return (
-    Array.isArray(f.rate) &&
-    f.rate.some((r) => !r.pagata)
-  );
+  return Array.isArray(f.rate) && f.rate.some((r) => !r.pagata);
 }
 
 function getFilteredFatture() {
-  const search = (
-    document.getElementById("searchText")?.value || ""
-  )
-    .trim()
-    .toLowerCase();
-
-  const filterMonth =
-    document.getElementById("filterMonth")?.value || "";
-
-  const filterYear =
-    document.getElementById("filterYear")?.value || "";
-
-  const filterTipo =
-    document.getElementById("filterTipo")?.value || "";
-
-  const filterStatus =
-    document.getElementById("filterStatus")?.value || "";
+  const search = (document.getElementById("searchText")?.value || "").trim().toLowerCase();
+  const filterMonth = document.getElementById("filterMonth")?.value || "";
+  const filterYear = document.getElementById("filterYear")?.value || "";
+  const filterTipo = document.getElementById("filterTipo")?.value || "";
+  const filterStatus = document.getElementById("filterStatus")?.value || "";
 
   return [...fatture]
     .filter((f) => {
-      const date = new Date(`${f.scadenza}T00:00:00`);
-
-      const month = String(
-        date.getMonth() + 1
-      ).padStart(2, "0");
-
+      const date = new Date(f.scadenza);
+      const month = String(date.getMonth() + 1).padStart(2, "0");
       const year = String(date.getFullYear());
 
       const matchesSearch =
         !search ||
-        (f.fornitore || "")
-          .toLowerCase()
-          .includes(search) ||
-        (f.numeroFattura || "")
-          .toLowerCase()
-          .includes(search);
+        (f.fornitore || "").toLowerCase().includes(search) ||
+        (f.numeroFattura || "").toLowerCase().includes(search);
 
-      const matchesMonth =
-        !filterMonth || month === filterMonth;
-
-      const matchesYear =
-        !filterYear || year === filterYear;
-
-      const matchesTipo =
-        !filterTipo ||
-        (f.tipoFattura || "") === filterTipo;
+      const matchesMonth = !filterMonth || month === filterMonth;
+      const matchesYear = !filterYear || year === filterYear;
+      const matchesTipo = !filterTipo || (f.tipoFattura || "") === filterTipo;
 
       let matchesStatus = true;
+      if (filterStatus === "pagata") matchesStatus = !!f.pagata;
+      if (filterStatus === "dapagare") matchesStatus = !f.pagata;
+      if (filterStatus === "archiviata") matchesStatus = !!f.archiviata;
+      if (filterStatus === "rateizzata") matchesStatus = !!f.rateizzata;
+      if (filterStatus === "rateizzatadaPagare") matchesStatus = !!f.rateizzata && hasUnpaidInstallments(f);
 
-      if (filterStatus === "pagata") {
-        matchesStatus = !!f.pagata;
-      }
-
-      if (filterStatus === "dapagare") {
-        matchesStatus = !f.pagata;
-      }
-
-      if (filterStatus === "archiviata") {
-        matchesStatus = !!f.archiviata;
-      }
-
-      if (filterStatus === "rateizzata") {
-        matchesStatus = !!f.rateizzata;
-      }
-
-      if (filterStatus === "rateizzatadaPagare") {
-        matchesStatus =
-          !!f.rateizzata &&
-          hasUnpaidInstallments(f);
-      }
-
-      return (
-        matchesSearch &&
-        matchesMonth &&
-        matchesYear &&
-        matchesTipo &&
-        matchesStatus
-      );
+      return matchesSearch && matchesMonth && matchesYear && matchesTipo && matchesStatus;
     })
-    .sort(
-      (a, b) =>
-        new Date(`${a.scadenza}T00:00:00`) -
-        new Date(`${b.scadenza}T00:00:00`)
-    );
+    .sort((a, b) => new Date(a.scadenza) - new Date(b.scadenza));
+}
+
+// --- BULK ACTIONS ---
+function toggleSelectFattura(id) {
+  if (selectedFattureIds.has(id)) {
+    selectedFattureIds.delete(id);
+  } else {
+    selectedFattureIds.add(id);
+  }
+  updateBulkBar();
+}
+
+function updateBulkBar() {
+  const bar = document.getElementById("bulkActionsBar");
+  const countSpan = document.getElementById("selectedCount");
+  if (!bar || !countSpan) return;
+  
+  if (selectedFattureIds.size > 0) {
+    bar.classList.remove("hidden");
+    countSpan.textContent = selectedFattureIds.size;
+  } else {
+    bar.classList.add("hidden");
+  }
+}
+
+function clearSelection() {
+  selectedFattureIds.clear();
+  updateBulkBar();
+  const inputs = document.querySelectorAll('.selection-control input');
+  inputs.forEach(input => input.checked = false);
+}
+
+function bulkArchive(status = true) {
+  if (selectedFattureIds.size === 0) return;
+
+  fatture = fatture.map(f => {
+    if (selectedFattureIds.has(f.id)) {
+      return { ...f, archiviata: status };
+    }
+    return f;
+  });
+
+  saveData();
+  selectedFattureIds.clear();
+  refreshAll();
+  updateBulkBar();
+}
+
+async function bulkDelete() {
+  if (selectedFattureIds.size === 0) return;
+  
+  const conferma = confirm(`Sei sicuro di voler eliminare ${selectedFattureIds.size} fatture in modo permanente?`);
+  if (!conferma) return;
+
+  const idsToDelete = Array.from(selectedFattureIds);
+
+  for (const id of idsToDelete) {
+    const item = fatture.find(f => f.id === id);
+    if (item?.id) await deletePdfFromDB(item.id);
+  }
+
+  fatture = fatture.filter(f => !selectedFattureIds.has(f.id));
+
+  saveData();
+  selectedFattureIds.clear();
+  refreshAll();
+  updateBulkBar();
 }
 
 function renderFatture() {
@@ -972,324 +830,100 @@ function renderFatture() {
 
   const fattureOrdinate = getFilteredFatture();
 
-  const filteredCount =
-    document.getElementById("filteredCount");
-
-  const filteredTotal =
-    document.getElementById("filteredTotal");
-
-  if (filteredCount) {
-    filteredCount.textContent = fattureOrdinate.length;
-  }
-
-  if (filteredTotal) {
-    filteredTotal.textContent = formatMoney(
-      fattureOrdinate.reduce(
-        (sum, f) => sum + parseMoney(f.importo),
-        0
-      )
-    );
-  }
+  document.getElementById("filteredCount").textContent = fattureOrdinate.length;
+  document.getElementById("filteredTotal").textContent = formatMoney(
+    fattureOrdinate.reduce((sum, f) => sum + parseMoney(f.importo), 0)
+  );
 
   if (fattureOrdinate.length === 0) {
-    ul.innerHTML =
-      "<li>Nessuna fattura trovata con i filtri selezionati.</li>";
+    ul.innerHTML = "<li class='empty-state'>Nessuna fattura trovata con i filtri selezionati.</li>";
     return;
   }
 
   fattureOrdinate.forEach((f) => {
-    const originalIndex =
-      fatture.findIndex((item) => item.id === f.id);
-
-    const stato =
-      f.pagata ? "Pagata" : "Da pagare";
-
-    const badgeClass =
-      f.pagata ? "paid" : "pending";
-
-    const badgeArchivio =
-      f.archiviata
-        ? `<span class="badge archived">Archiviata</span>`
-        : "";
-
-    const badgeRate =
-      f.rateizzata
-        ? `<span class="badge installment">Rateizzata</span>`
-        : "";
-
+    const originalIndex = fatture.findIndex((item) => item.id === f.id);
+    const stato = f.pagata ? "Pagata" : "Da pagare";
+    const badgeClass = f.pagata ? "paid" : "pending";
+    const badgeArchivio = f.archiviata ? `<span class="badge archived">Archiviata</span>` : "";
+    const badgeRate = f.rateizzata ? `<span class="badge installment">Rateizzata</span>` : "";
     const icon = getProviderIcon(f.fornitore);
+    const isChecked = selectedFattureIds.has(f.id) ? "checked" : "";
 
-    const rateHtml =
-      f.rateizzata && Array.isArray(f.rate)
-        ? `
-          <div class="installments-box">
-            <strong>Piano rate</strong>
-
-            ${f.rate
-              .map((r, idx) => {
-                const hasReceipt =
-                  Boolean(r.receiptMeta);
-
-                const receiptName =
-                  r.receiptMeta?.name || "";
-
-                return `
-                  <div class="installment-row">
-                    <div class="installment-main">
-                      <div class="installment-title">
-                        Rata ${r.numero} • € ${escapeHtml(r.importo)}
-                      </div>
-
-                      <div class="installment-date-editor">
-                        <label for="installment-date-${f.id}-${idx}">
-                          Scadenza
-                        </label>
-
-                        <input
-                          id="installment-date-${f.id}-${idx}"
-                          type="date"
-                          value="${escapeHtml(r.scadenza)}"
-                        />
-
-                        <button
-                          class="small-btn edit-btn"
-                          onclick="updateInstallmentDate(${originalIndex}, ${idx})"
-                        >
-                          Salva data
-                        </button>
-                      </div>
-
-                      <div class="small-text">
-                        Stato:
-                        <strong>
-                          ${r.pagata ? "Pagata" : "Da pagare"}
-                        </strong>
-                      </div>
-
-                      ${
-                        r.dataPagamento
-                          ? `
-                            <div class="small-text">
-                              Data pagamento:
-                              ${formatDate(r.dataPagamento)}
-                            </div>
-                          `
-                          : ""
-                      }
-
-                      ${
-                        hasReceipt
-                          ? `
-                            <div class="receipt-status">
-                              ✅ Ricevuta allegata:
-                              <strong>
-                                ${escapeHtml(receiptName)}
-                              </strong>
-                            </div>
-                          `
-                          : `
-                            <div class="receipt-status receipt-missing">
-                              Nessuna ricevuta allegata
-                            </div>
-                          `
-                      }
-
-                      <div class="receipt-upload">
-                        <label
-                          class="receipt-file-label"
-                          for="receipt-${f.id}-${idx}"
-                        >
-                          Ricevuta pagamento
-                        </label>
-
-                        <input
-                          id="receipt-${f.id}-${idx}"
-                          type="file"
-                          accept="application/pdf,image/jpeg,image/png,image/webp"
-                        />
-
-                        <div class="receipt-actions">
-                          <button
-                            class="small-btn receipt-save-btn"
-                            onclick="uploadReceipt(${originalIndex}, ${idx})"
-                          >
-                            ${
-                              hasReceipt
-                                ? "Sostituisci ricevuta"
-                                : "Salva ricevuta"
-                            }
-                          </button>
-
-                          ${
-                            hasReceipt
-                              ? `
-                                <button
-                                  class="small-btn open-btn"
-                                  onclick="openReceipt(${originalIndex}, ${idx})"
-                                >
-                                  Apri ricevuta
-                                </button>
-
-                                <button
-                                  class="small-btn delete-btn"
-                                  onclick="removeReceipt(${originalIndex}, ${idx})"
-                                >
-                                  Elimina ricevuta
-                                </button>
-                              `
-                              : ""
-                          }
-                        </div>
-                      </div>
-                    </div>
-
-                    <div class="installment-payment-action">
-                      ${
-                        !r.pagata
-                          ? `
-                            <button
-                              class="small-btn pay-btn"
-                              onclick="segnaRataPagata(${originalIndex}, ${idx})"
-                            >
-                              Segna pagata
-                            </button>
-                          `
-                          : `
-                            <span class="paid-installment-label">
-                              ✓ Pagata
-                            </span>
-                          `
-                      }
-                    </div>
-                  </div>
-                `;
-              })
-              .join("")}
-          </div>
-        `
-        : "";
+    const rateHtml = f.rateizzata && Array.isArray(f.rate)
+      ? `
+        <div class="installments-box">
+          <strong>Piano rate</strong>
+          ${f.rate.map((r, idx) => `
+            <div class="installment-row">
+              <div>
+                Rata ${r.numero} • € ${escapeHtml(r.importo)} • ${formatDate(r.scadenza)}
+                <div class="small-text">${r.pagata ? "Pagata" : "Da pagare"}</div>
+              </div>
+              <div>
+                ${!r.pagata ? `<button class="small-btn pay-btn" onclick="segnaRataPagata(${originalIndex}, ${idx})">Segna pagata</button>` : ""}
+              </div>
+            </div>
+          `).join("")}
+        </div>
+      `
+      : "";
 
     const li = document.createElement("li");
-
+    li.className = "fattura-item";
     li.innerHTML = `
-      <div class="bill-header">
-        <div class="provider-inline">
-          <span class="provider-icon">${icon}</span>
-
+      <div class="selection-control">
+        <input type="checkbox" ${isChecked} onchange="toggleSelectFattura(${f.id})">
+      </div>
+      <div class="bill-content">
+        <div class="bill-header">
+          <div class="provider-inline">
+            <span class="provider-icon">${icon}</span>
+            <div>
+              <strong>${escapeHtml(f.fornitore)}</strong>
+              <div class="small-text">Tipo: ${escapeHtml(f.tipoFattura || "-")}</div>
+              <div class="small-text">Scadenza: ${formatDate(f.scadenza)}</div>
+            </div>
+          </div>
           <div>
-            <strong>${escapeHtml(f.fornitore)}</strong>
-
-            <div class="small-text">
-              Tipo:
-              ${escapeHtml(f.tipoFattura || "-")}
-            </div>
-
-            <div class="small-text">
-              Scadenza:
-              ${formatDate(f.scadenza)}
-            </div>
+            <span class="badge ${badgeClass}">${stato}</span>
+            ${badgeArchivio}
+            ${badgeRate}
           </div>
         </div>
 
-        <div>
-          <span class="badge ${badgeClass}">
-            ${stato}
-          </span>
+        <div class="small-text">Importo totale: € ${escapeHtml(f.importo)}</div>
+        <div class="small-text">Numero fattura: ${escapeHtml(f.numeroFattura || "-")}</div>
+        <div class="small-text">Periodo: ${escapeHtml(f.periodoFattura || "-")}</div>
+        <div class="small-text">PDF: ${escapeHtml(f.pdfMeta?.name || "Non allegato")}</div>
 
-          ${badgeArchivio}
-          ${badgeRate}
+        ${
+          f.rateizzata
+            ? `<div class="small-text">Rate: ${escapeHtml(f.numeroRate)} • Importo rata: € ${escapeHtml(f.importoRata)} • Prima scadenza rata: ${formatDate(f.primaScadenzaRata)}</div>`
+            : ""
+        }
+
+        ${rateHtml}
+
+        <div class="actions">
+          ${
+            !f.pagata
+              ? `<button class="small-btn pay-btn" onclick="segnaPagata(${originalIndex})">Segna bolletta pagata</button>`
+              : ""
+          }
+          <button class="small-btn archive-btn" onclick="toggleArchivio(${originalIndex})">
+            ${f.archiviata ? "Togli da archivio" : "Archivia"}
+          </button>
+          ${f.pdfMeta ? `<button class="small-btn open-btn" onclick="apriPDF(${f.id})">Apri PDF</button>` : ""}
+          <button class="small-btn delete-btn" onclick="deleteFattura(${originalIndex})">Elimina</button>
         </div>
       </div>
-
-      <div class="small-text">
-        Importo totale:
-        € ${escapeHtml(f.importo)}
-      </div>
-
-      <div class="small-text">
-        Numero fattura:
-        ${escapeHtml(f.numeroFattura || "-")}
-      </div>
-
-      <div class="small-text">
-        Periodo:
-        ${escapeHtml(f.periodoFattura || "-")}
-      </div>
-
-      <div class="small-text">
-        PDF:
-        ${escapeHtml(f.pdfMeta?.name || "Non allegato")}
-      </div>
-
-      ${
-        f.rateizzata
-          ? `
-            <div class="small-text">
-              Rate:
-              ${escapeHtml(f.numeroRate)}
-              • Importo rata:
-              € ${escapeHtml(f.importoRata)}
-              • Prima scadenza rata:
-              ${formatDate(f.primaScadenzaRata)}
-            </div>
-          `
-          : ""
-      }
-
-      ${rateHtml}
-
-      <div class="actions">
-        ${
-          !f.pagata
-            ? `
-              <button
-                class="small-btn pay-btn"
-                onclick="segnaPagata(${originalIndex})"
-              >
-                Segna bolletta pagata
-              </button>
-            `
-            : ""
-        }
-
-        <button
-          class="small-btn archive-btn"
-          onclick="toggleArchivio(${originalIndex})"
-        >
-          ${
-            f.archiviata
-              ? "Togli da archivio"
-              : "Archivia"
-          }
-        </button>
-
-        ${
-          f.pdfMeta
-            ? `
-              <button
-                class="small-btn open-btn"
-                onclick="apriPDF(${f.id})"
-              >
-                Apri PDF
-              </button>
-            `
-            : ""
-        }
-
-        <button
-          class="small-btn delete-btn"
-          onclick="deleteFattura(${originalIndex})"
-        >
-          Elimina
-        </button>
-      </div>
     `;
-
     ul.appendChild(li);
   });
 }
 
 function applyFilters() {
+  clearSelection();
   renderFatture();
 }
 
@@ -1299,17 +933,13 @@ function resetFilters(renderNow = true) {
   document.getElementById("filterYear").value = "";
   document.getElementById("filterTipo").value = "";
   document.getElementById("filterStatus").value = "";
-
+  clearSelection();
   if (renderNow) renderFatture();
 }
 
 function populateFilterOptions() {
-  const monthSelect =
-    document.getElementById("filterMonth");
-
-  const yearSelect =
-    document.getElementById("filterYear");
-
+  const monthSelect = document.getElementById("filterMonth");
+  const yearSelect = document.getElementById("filterYear");
   if (!monthSelect || !yearSelect) return;
 
   const currentMonth = monthSelect.value;
@@ -1320,67 +950,40 @@ function populateFilterOptions() {
 
   fatture.forEach((f) => {
     if (!f.scadenza) return;
-
-    const d =
-      new Date(`${f.scadenza}T00:00:00`);
-
-    if (Number.isNaN(d.getTime())) return;
-
-    months.add(
-      String(d.getMonth() + 1).padStart(2, "0")
-    );
-
+    const d = new Date(f.scadenza);
+    months.add(String(d.getMonth() + 1).padStart(2, "0"));
     years.add(String(d.getFullYear()));
   });
 
-  monthSelect.innerHTML =
-    `<option value="">Tutti i mesi</option>`;
-
+  monthSelect.innerHTML = `<option value="">Tutti i mesi</option>`;
   [...months].sort().forEach((m) => {
-    monthSelect.innerHTML +=
-      `<option value="${m}">${m}</option>`;
+    monthSelect.innerHTML += `<option value="${m}">${m}</option>`;
   });
 
-  yearSelect.innerHTML =
-    `<option value="">Tutti gli anni</option>`;
-
+  yearSelect.innerHTML = `<option value="">Tutti gli anni</option>`;
   [...years].sort().forEach((y) => {
-    yearSelect.innerHTML +=
-      `<option value="${y}">${y}</option>`;
+    yearSelect.innerHTML += `<option value="${y}">${y}</option>`;
   });
 
   monthSelect.value = currentMonth;
   yearSelect.value = currentYear;
 }
 
+// --- GRAFICI INTERATTIVI ---
 function renderMonthlyChart() {
-  const canvas =
-    document.getElementById("monthlyChart");
-
+  const canvas = document.getElementById("monthlyChart");
   if (!canvas || typeof Chart === "undefined") return;
 
   const map = {};
-
   fatture.forEach((f) => {
     if (!f.scadenza) return;
-
-    const d =
-      new Date(`${f.scadenza}T00:00:00`);
-
-    if (Number.isNaN(d.getTime())) return;
-
-    const key =
-      `${d.getFullYear()}-${String(
-        d.getMonth() + 1
-      ).padStart(2, "0")}`;
-
-    map[key] =
-      (map[key] || 0) + parseMoney(f.importo);
+    const d = new Date(f.scadenza);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    map[key] = (map[key] || 0) + parseMoney(f.importo);
   });
 
   const labels = Object.keys(map).sort();
-  const values =
-    labels.map((key) => Number(formatMoney(map[key])));
+  const values = labels.map((k) => Number(formatMoney(map[k])));
 
   if (monthlyChart) monthlyChart.destroy();
 
@@ -1391,36 +994,30 @@ function renderMonthlyChart() {
       datasets: [
         {
           label: "Spese mensili (€)",
-          data: values
+          data: values,
+          backgroundColor: "#0b6fc2",
+          borderRadius: 6,
+          hoverBackgroundColor: "#005195"
         }
       ]
     },
     options: {
       responsive: true,
-      onClick: (_, elements) => {
-        if (!elements.length) return;
-
-        const index = elements[0].index;
-        const key = labels[index];
-
-        const [year, month] = key.split("-");
-
-        resetFilters(false);
-
-        document.getElementById("filterYear").value = year;
-        document.getElementById("filterMonth").value = month;
-
-        showSection("archivio");
-        renderFatture();
-      },
       plugins: {
-        legend: {
-          display: true
-        }
+        legend: { display: false }
       },
       scales: {
-        y: {
-          beginAtZero: true
+        y: { beginAtZero: true }
+      },
+      onHover: (event, chartElement) => {
+        event.native.target.style.cursor = chartElement[0] ? 'pointer' : 'default';
+      },
+      onClick: (event, elements) => {
+        if (elements.length > 0) {
+          const index = elements[0].index;
+          const label = labels[index]; 
+          const [year, month] = label.split("-");
+          jumpToArchiveWithFilters({ year, month });
         }
       }
     }
@@ -1428,38 +1025,33 @@ function renderMonthlyChart() {
 }
 
 function renderUtilityTypeChart() {
-  const canvas =
-    document.getElementById("utilityTypeChart");
-
+  const canvas = document.getElementById("utilityTypeChart");
   if (!canvas || typeof Chart === "undefined") return;
 
   const map = {
-    Luce: 0,
-    Gas: 0,
-    Acqua: 0,
-    Internet: 0,
-    Telefono: 0,
-    Rifiuti: 0,
-    Altro: 0
+    Luce: 0, Gas: 0, Acqua: 0, Internet: 0, Telefono: 0, Rifiuti: 0, Altro: 0
   };
 
   fatture.forEach((f) => {
     const tipo = f.tipoFattura || "Altro";
-
-    if (!Object.prototype.hasOwnProperty.call(map, tipo)) {
-      map[tipo] = 0;
-    }
-
+    if (!Object.prototype.hasOwnProperty.call(map, tipo)) map[tipo] = 0;
     map[tipo] += parseMoney(f.importo);
   });
 
-  const labels =
-    Object.keys(map).filter((key) => map[key] > 0);
-
-  const values =
-    labels.map((key) => Number(formatMoney(map[key])));
+  const labels = Object.keys(map);
+  const values = labels.map((k) => Number(formatMoney(map[k])));
 
   if (utilityTypeChart) utilityTypeChart.destroy();
+
+  const backgroundColors = [
+    "#f59e0b", 
+    "#ef4444", 
+    "#3b82f6", 
+    "#8b5cf6", 
+    "#10b981", 
+    "#64748b", 
+    "#cbd5e1"  
+  ];
 
   utilityTypeChart = new Chart(canvas, {
     type: "doughnut",
@@ -1468,27 +1060,26 @@ function renderUtilityTypeChart() {
       datasets: [
         {
           label: "Spese per tipo",
-          data: values
+          data: values,
+          backgroundColor: backgroundColors,
+          borderWidth: 2,
+          hoverOffset: 10
         }
       ]
     },
     options: {
       responsive: true,
-      onClick: (_, elements) => {
-        if (!elements.length) return;
-
-        const index = elements[0].index;
-        const tipo = labels[index];
-
-        resetFilters(false);
-        document.getElementById("filterTipo").value = tipo;
-
-        showSection("archivio");
-        renderFatture();
-      },
       plugins: {
-        legend: {
-          position: "bottom"
+        legend: { position: "bottom" }
+      },
+      onHover: (event, chartElement) => {
+        event.native.target.style.cursor = chartElement[0] ? 'pointer' : 'default';
+      },
+      onClick: (event, elements) => {
+        if (elements.length > 0) {
+          const index = elements[0].index;
+          const label = labels[index]; 
+          jumpToArchiveWithFilters({ tipo: label });
         }
       }
     }
@@ -1496,20 +1087,10 @@ function renderUtilityTypeChart() {
 }
 
 function segnaPagata(index) {
-  const fattura = fatture[index];
+  fatture[index].pagata = true;
 
-  if (!fattura) return;
-
-  fattura.pagata = true;
-
-  if (Array.isArray(fattura.rate)) {
-    fattura.rate = fattura.rate.map((r) => ({
-      ...r,
-      pagata: true,
-      dataPagamento:
-        r.dataPagamento ||
-        new Date().toISOString().split("T")[0]
-    }));
+  if (Array.isArray(fatture[index].rate)) {
+    fatture[index].rate = fatture[index].rate.map((r) => ({ ...r, pagata: true }));
   }
 
   saveData();
@@ -1518,106 +1099,69 @@ function segnaPagata(index) {
 
 function segnaRataPagata(fatturaIndex, rataIndex) {
   const fattura = fatture[fatturaIndex];
+  if (!fattura || !Array.isArray(fattura.rate)) return;
 
-  if (!fattura || !Array.isArray(fattura.rate)) {
-    return;
-  }
-
-  const rata = fattura.rate[rataIndex];
-
-  if (!rata) return;
-
-  rata.pagata = true;
-  rata.dataPagamento =
-    new Date().toISOString().split("T")[0];
-
-  if (fattura.rate.every((item) => item.pagata)) {
-    fattura.pagata = true;
-  }
+  fattura.rate[rataIndex].pagata = true;
+  if (fattura.rate.every((r) => r.pagata)) fattura.pagata = true;
 
   saveData();
   refreshAll();
 }
 
 function toggleArchivio(index) {
-  if (!fatture[index]) return;
-
-  fatture[index].archiviata =
-    !fatture[index].archiviata;
-
+  fatture[index].archiviata = !fatture[index].archiviata;
   saveData();
   refreshAll();
 }
 
 async function deleteFattura(index) {
-  const conferma = confirm(
-    "Vuoi eliminare questa fattura, il PDF e tutte le ricevute?"
-  );
-
+  const conferma = confirm("Vuoi eliminare questa fattura?");
   if (!conferma) return;
 
   const item = fatture[index];
-
-  if (item?.id) {
-    await deletePdfFromDB(item.id).catch(() => null);
-    await deleteAllInvoiceReceipts(item);
-  }
+  if (item?.id) await deletePdfFromDB(item.id);
 
   fatture.splice(index, 1);
-
   saveData();
   refreshAll();
 }
 
+// --- DASHBOARD RENDERERS ---
 function renderScadenze() {
-  const div =
-    document.getElementById("scadenze");
-
+  const div = document.getElementById("scadenze");
   div.innerHTML = "";
 
   const prossime = fatture
-    .filter((f) => !f.pagata && !f.rateizzata)
-    .map((f) => ({
-      ...f,
-      diffGiorni:
-        daysDiffFromToday(f.scadenza)
-    }))
+    .filter((f) => !f.pagata)
+    .map((f) => ({ ...f, diffGiorni: daysDiffFromToday(f.scadenza) }))
     .filter((f) => f.diffGiorni <= 10)
     .sort((a, b) => a.diffGiorni - b.diffGiorni);
 
   if (prossime.length === 0) {
-    div.innerHTML = `
-      <div class="empty-state">
-        Nessuna scadenza imminente nei prossimi 10 giorni.
-      </div>
-    `;
+    div.innerHTML = `<div class="empty-state">Nessuna scadenza imminente nei prossimi 10 giorni.</div>`;
     return;
   }
 
   prossime.forEach((f) => {
     let testoGiorni = "";
-
-    if (f.diffGiorni < 0) {
-      testoGiorni =
-        `Scaduta da ${Math.abs(f.diffGiorni)} giorni`;
-    } else if (f.diffGiorni === 0) {
-      testoGiorni = "Scade oggi";
-    } else {
-      testoGiorni =
-        `Scade tra ${f.diffGiorni} giorni`;
-    }
+    if (f.diffGiorni < 0) testoGiorni = `Scaduta da ${Math.abs(f.diffGiorni)} giorni`;
+    else if (f.diffGiorni === 0) testoGiorni = "Scade oggi";
+    else testoGiorni = `Scade tra ${f.diffGiorni} giorni`;
 
     const item = document.createElement("div");
-    item.className = "alert-item";
-
+    item.className = "alert-item clickable-item";
+    item.onclick = () => jumpToFattura(f.id);
+    
     item.innerHTML = `
-      <strong>${escapeHtml(f.fornitore)}</strong><br>
-      Tipo: ${escapeHtml(f.tipoFattura || "-")}<br>
-      Importo: € ${escapeHtml(f.importo)}<br>
-      Data: ${formatDate(f.scadenza)}<br>
-      <strong>${testoGiorni}</strong>
+      <div style="flex:1;">
+        <strong>${escapeHtml(f.fornitore)}</strong><br>
+        Tipo: ${escapeHtml(f.tipoFattura || "-")}<br>
+        Importo: € ${escapeHtml(f.importo)}<br>
+        Data: ${formatDate(f.scadenza)}<br>
+        <strong>${testoGiorni}</strong>
+      </div>
+      <div class="jump-icon">➔</div>
     `;
-
     div.appendChild(item);
   });
 }
@@ -1626,10 +1170,7 @@ function getAllUnpaidInstallments() {
   const result = [];
 
   fatture.forEach((f, fatturaIndex) => {
-    if (
-      f.rateizzata &&
-      Array.isArray(f.rate)
-    ) {
+    if (f.rateizzata && Array.isArray(f.rate)) {
       f.rate.forEach((r, rataIndex) => {
         if (!r.pagata) {
           result.push({
@@ -1641,8 +1182,7 @@ function getAllUnpaidInstallments() {
             numeroRata: r.numero,
             importo: r.importo,
             scadenza: r.scadenza,
-            diffGiorni:
-              daysDiffFromToday(r.scadenza)
+            diffGiorni: daysDiffFromToday(r.scadenza)
           });
         }
       });
@@ -1653,9 +1193,7 @@ function getAllUnpaidInstallments() {
 }
 
 function renderRateProssime() {
-  const div =
-    document.getElementById("rateProssime");
-
+  const div = document.getElementById("rateProssime");
   div.innerHTML = "";
 
   const rate = getAllUnpaidInstallments()
@@ -1663,168 +1201,95 @@ function renderRateProssime() {
     .sort((a, b) => a.diffGiorni - b.diffGiorni);
 
   if (rate.length === 0) {
-    div.innerHTML = `
-      <div class="empty-state">
-        Nessuna rata imminente nei prossimi 10 giorni.
-      </div>
-    `;
+    div.innerHTML = `<div class="empty-state">Nessuna rata imminente nei prossimi 10 giorni.</div>`;
     return;
   }
 
   rate.forEach((r) => {
     let testo = "";
-
-    if (r.diffGiorni < 0) {
-      testo =
-        `Scaduta da ${Math.abs(r.diffGiorni)} giorni`;
-    } else if (r.diffGiorni === 0) {
-      testo = "Scade oggi";
-    } else {
-      testo =
-        `Scade tra ${r.diffGiorni} giorni`;
-    }
+    if (r.diffGiorni < 0) testo = `Scaduta da ${Math.abs(r.diffGiorni)} giorni`;
+    else if (r.diffGiorni === 0) testo = "Scade oggi";
+    else testo = `Scade tra ${r.diffGiorni} giorni`;
 
     const item = document.createElement("div");
-    item.className = "info-item";
-
+    item.className = "info-item clickable-item";
+    item.onclick = () => jumpToFattura(r.fatturaId);
+    
     item.innerHTML = `
-      <strong>${escapeHtml(r.fornitore)}</strong><br>
-      Rata ${r.numeroRata}
-      • € ${escapeHtml(r.importo)}<br>
-      Data: ${formatDate(r.scadenza)}<br>
-      <strong>${testo}</strong>
+      <div style="flex:1;">
+        <strong>${escapeHtml(r.fornitore)}</strong><br>
+        Rata ${r.numeroRata} • € ${escapeHtml(r.importo)}<br>
+        Data: ${formatDate(r.scadenza)}<br>
+        <strong>${testo}</strong>
+      </div>
+      <div class="jump-icon">➔</div>
     `;
-
     div.appendChild(item);
   });
 }
 
-function addAutolettura() {
-  const contatore =
-    document.getElementById("contatore").value.trim();
-
-  const tipo =
-    document.getElementById("tipoContatore").value;
-
-  const data =
-    document.getElementById("dataAutolettura").value;
-
-  const nota =
-    document.getElementById("notaAutolettura").value.trim();
-
-  if (!contatore || !tipo || !data) {
-    alert(
-      "Compila contatore, tipo e data autolettura."
-    );
-    return;
-  }
-
-  autoletture.push({
-    id: Date.now(),
-    contatore,
-    tipo,
-    data,
-    nota
-  });
-
-  saveData();
-  refreshAll();
-  clearAutoletturaForm();
-}
-
-function renderAutoletture() {
-  const ul =
-    document.getElementById("listaAutoletture");
-
-  ul.innerHTML = "";
-
-  if (autoletture.length === 0) {
-    ul.innerHTML =
-      "<li>Nessuna autolettura salvata.</li>";
-    return;
-  }
-
-  const lista = [...autoletture].sort(
-    (a, b) =>
-      new Date(`${a.data}T00:00:00`) -
-      new Date(`${b.data}T00:00:00`)
-  );
-
-  lista.forEach((a) => {
-    const li = document.createElement("li");
-
-    li.innerHTML = `
-      <div class="bill-header">
-        <div>
-          <strong>${escapeHtml(a.contatore)}</strong>
-
-          <div class="small-text">
-            Tipo: ${escapeHtml(a.tipo)}
-          </div>
-
-          <div class="small-text">
-            Data: ${formatDate(a.data)}
-          </div>
-
-          <div class="small-text">
-            Nota: ${escapeHtml(a.nota || "-")}
-          </div>
-        </div>
-      </div>
-    `;
-
-    ul.appendChild(li);
-  });
-}
-
 function renderAutolettureProssime() {
-  const div =
-    document.getElementById("autolettureProssime");
-
+  const div = document.getElementById("autolettureProssime");
   div.innerHTML = "";
 
   const lista = autoletture
-    .map((a) => ({
-      ...a,
-      diffGiorni:
-        daysDiffFromToday(a.data)
-    }))
+    .map((a) => ({ ...a, diffGiorni: daysDiffFromToday(a.data) }))
     .filter((a) => a.diffGiorni <= 7)
     .sort((a, b) => a.diffGiorni - b.diffGiorni);
 
   if (lista.length === 0) {
-    div.innerHTML = `
-      <div class="empty-state">
-        Nessuna autolettura imminente nei prossimi 7 giorni.
-      </div>
-    `;
+    div.innerHTML = `<div class="empty-state">Nessuna autolettura imminente nei prossimi 7 giorni.</div>`;
     return;
   }
 
   lista.forEach((a) => {
     let testo = "";
-
-    if (a.diffGiorni < 0) {
-      testo =
-        `In ritardo di ${Math.abs(a.diffGiorni)} giorni`;
-    } else if (a.diffGiorni === 0) {
-      testo = "Da fare oggi";
-    } else {
-      testo =
-        `Da fare tra ${a.diffGiorni} giorni`;
-    }
+    if (a.diffGiorni < 0) testo = `In ritardo di ${Math.abs(a.diffGiorni)} giorni`;
+    else if (a.diffGiorni === 0) testo = "Da fare oggi";
+    else testo = `Da fare tra ${a.diffGiorni} giorni`;
 
     const item = document.createElement("div");
-    item.className = "info-item";
-
+    item.className = "info-item clickable-item";
+    item.onclick = () => jumpToAutolettura(a.contatore);
+    
     item.innerHTML = `
-      <strong>${escapeHtml(a.contatore)}</strong><br>
-      Tipo: ${escapeHtml(a.tipo)}<br>
-      Data: ${formatDate(a.data)}<br>
-      <strong>${testo}</strong>
+      <div style="flex:1;">
+        <strong>${escapeHtml(a.contatore)}</strong><br>
+        Tipo: ${escapeHtml(a.tipo)}<br>
+        Data: ${formatDate(a.data)}<br>
+        <strong>${testo}</strong>
+      </div>
+      <div class="jump-icon">➔</div>
     `;
-
     div.appendChild(item);
+  });
+}
+
+function renderNotifiche() {
+  const box = document.getElementById("notificheBox");
+  box.innerHTML = "";
+
+  const notifiche = raccogliNotifiche();
+
+  if (notifiche.length === 0) {
+    box.innerHTML = `<div class="empty-state">Nessuna notifica al momento.</div>`;
+    return;
+  }
+
+  notifiche.forEach((n) => {
+    const div = document.createElement("div");
+    div.className = `${n.tipo === "danger" ? "danger-item" : "info-item"} clickable-item`;
+    
+    div.onclick = () => {
+      if (n.targetType === "fattura") jumpToFattura(n.targetId);
+      if (n.targetType === "autolettura") jumpToAutolettura(n.targetId);
+    };
+
+    div.innerHTML = `
+      <div style="flex:1;">${n.testo}</div>
+      <div class="jump-icon">➔</div>
+    `;
+    box.appendChild(div);
   });
 }
 
@@ -1832,321 +1297,124 @@ function raccogliNotifiche() {
   const notifiche = [];
 
   fatture.forEach((f) => {
-    if (!f.pagata && !f.rateizzata) {
-      const diff =
-        daysDiffFromToday(f.scadenza);
-
-      if (diff < 0) {
-        notifiche.push({
-          tipo: "danger",
-          testo:
-            `${f.fornitore}: bolletta scaduta da ` +
-            `${Math.abs(diff)} giorni`
-        });
-      } else if (diff <= 3) {
-        notifiche.push({
-          tipo: "info",
-          testo:
-            `${f.fornitore}: bolletta in scadenza il ` +
-            `${formatDate(f.scadenza)}`
-        });
-      }
+    if (!f.pagata) {
+      const diff = daysDiffFromToday(f.scadenza);
+      if (diff < 0) notifiche.push({ tipo: "danger", testo: `${f.fornitore}: bolletta scaduta da ${Math.abs(diff)} giorni`, targetType: "fattura", targetId: f.id });
+      else if (diff <= 3) notifiche.push({ tipo: "info", testo: `${f.fornitore}: bolletta in scadenza il ${formatDate(f.scadenza)}`, targetType: "fattura", targetId: f.id });
     }
   });
 
   getAllUnpaidInstallments().forEach((r) => {
-    if (r.diffGiorni < 0) {
-      notifiche.push({
-        tipo: "danger",
-        testo:
-          `${r.fornitore}: rata ${r.numeroRata} scaduta da ` +
-          `${Math.abs(r.diffGiorni)} giorni`
-      });
-    } else if (r.diffGiorni <= 3) {
-      notifiche.push({
-        tipo: "info",
-        testo:
-          `${r.fornitore}: rata ${r.numeroRata} in scadenza il ` +
-          `${formatDate(r.scadenza)}`
-      });
-    }
+    if (r.diffGiorni < 0) notifiche.push({ tipo: "danger", testo: `${r.fornitore}: rata ${r.numeroRata} scaduta da ${Math.abs(r.diffGiorni)} giorni`, targetType: "fattura", targetId: r.fatturaId });
+    else if (r.diffGiorni <= 3) notifiche.push({ tipo: "info", testo: `${r.fornitore}: rata ${r.numeroRata} in scadenza il ${formatDate(r.scadenza)}`, targetType: "fattura", targetId: r.fatturaId });
   });
 
   autoletture.forEach((a) => {
-    const diff =
-      daysDiffFromToday(a.data);
-
-    if (diff < 0) {
-      notifiche.push({
-        tipo: "danger",
-        testo:
-          `${a.contatore}: autolettura in ritardo di ` +
-          `${Math.abs(diff)} giorni`
-      });
-    } else if (diff <= 2) {
-      notifiche.push({
-        tipo: "info",
-        testo:
-          `${a.contatore}: autolettura da fare il ` +
-          `${formatDate(a.data)}`
-      });
-    }
+    const diff = daysDiffFromToday(a.data);
+    if (diff < 0) notifiche.push({ tipo: "danger", testo: `${a.contatore}: autolettura in ritardo di ${Math.abs(diff)} giorni`, targetType: "autolettura", targetId: a.contatore });
+    else if (diff <= 2) notifiche.push({ tipo: "info", testo: `${a.contatore}: autolettura da fare il ${formatDate(a.data)}`, targetType: "autolettura", targetId: a.contatore });
   });
 
   return notifiche;
 }
 
-function renderNotifiche() {
-  const box =
-    document.getElementById("notificheBox");
+function renderAutoletture() {
+  const ul = document.getElementById("listaAutoletture");
+  ul.innerHTML = "";
 
-  box.innerHTML = "";
-
-  const notifiche =
-    raccogliNotifiche();
-
-  if (notifiche.length === 0) {
-    box.innerHTML = `
-      <div class="empty-state">
-        Nessuna notifica al momento.
-      </div>
-    `;
+  if (autoletture.length === 0) {
+    ul.innerHTML = "<li class='empty-state'>Nessuna autolettura salvata.</li>";
     return;
   }
 
-  notifiche.forEach((n) => {
-    const div = document.createElement("div");
+  const lista = [...autoletture].sort((a, b) => new Date(a.data) - new Date(b.data));
 
-    div.className =
-      n.tipo === "danger"
-        ? "danger-item"
-        : "info-item";
-
-    div.textContent = n.testo;
-    box.appendChild(div);
+  lista.forEach((a) => {
+    const li = document.createElement("li");
+    li.innerHTML = `
+      <div class="bill-header">
+        <div>
+          <strong>${escapeHtml(a.contatore)}</strong>
+          <div class="small-text">Tipo: ${escapeHtml(a.tipo)}</div>
+          <div class="small-text">Data: ${formatDate(a.data)}</div>
+          <div class="small-text">Nota: ${escapeHtml(a.nota || "-")}</div>
+        </div>
+      </div>
+    `;
+    ul.appendChild(li);
   });
 }
 
 function renderStats() {
-  const totalRate =
-    fatture.reduce(
-      (sum, f) =>
-        sum +
-        (Array.isArray(f.rate)
-          ? f.rate.length
-          : 0),
-      0
-    );
+  const totalRate = fatture.reduce((sum, f) => sum + (Array.isArray(f.rate) ? f.rate.length : 0), 0);
+  const totalRateDaPagare = fatture.reduce(
+    (sum, f) => sum + (Array.isArray(f.rate) ? f.rate.filter((r) => !r.pagata).length : 0),
+    0
+  );
 
-  const totalRateDaPagare =
-    fatture.reduce(
-      (sum, f) =>
-        sum +
-        (Array.isArray(f.rate)
-          ? f.rate.filter((r) => !r.pagata).length
-          : 0),
-      0
-    );
-
-  document.getElementById("totFatture").textContent =
-    fatture.length;
-
-  document.getElementById("totDaPagare").textContent =
-    fatture.filter((f) => !f.pagata).length;
-
-  document.getElementById("totPagate").textContent =
-    fatture.filter((f) => f.pagata).length;
-
-  document.getElementById("totArchiviate").textContent =
-    fatture.filter((f) => f.archiviata).length;
-
-  document.getElementById("totRate").textContent =
-    totalRate;
-
-  document.getElementById("totRateDaPagare").textContent =
-    totalRateDaPagare;
+  document.getElementById("totFatture").textContent = fatture.length;
+  document.getElementById("totDaPagare").textContent = fatture.filter((f) => !f.pagata).length;
+  document.getElementById("totPagate").textContent = fatture.filter((f) => f.pagata).length;
+  document.getElementById("totArchiviate").textContent = fatture.filter((f) => f.archiviata).length;
+  document.getElementById("totRate").textContent = totalRate;
+  document.getElementById("totRateDaPagare").textContent = totalRateDaPagare;
 }
 
+// --- LETTURA PDF E INTEGRAZIONE AI CLOUDFLARE ---
 async function leggiPDF() {
-  const file =
-    document.getElementById("pdf").files[0];
-
+  const file = document.getElementById("pdf").files[0];
   if (!file) {
     alert("Carica prima un PDF.");
     return;
   }
 
+  // Feedback visivo: l'IA richiede qualche secondo
+  const btn = document.querySelector("button[onclick='leggiPDF()']");
+  const originalText = btn.textContent;
+  btn.textContent = "Analisi IA in corso (attendere)...";
+  btn.disabled = true;
+
   try {
-    const arrayBuffer =
-      await file.arrayBuffer();
-
-    const typedArray =
-      new Uint8Array(arrayBuffer);
-
-    const pdf =
-      await pdfjsLib.getDocument(typedArray).promise;
+    const arrayBuffer = await file.arrayBuffer();
+    const typedArray = new Uint8Array(arrayBuffer);
+    const pdf = await pdfjsLib.getDocument(typedArray).promise;
 
     let testoCompleto = "";
-
     for (let i = 1; i <= pdf.numPages; i++) {
-      const page =
-        await pdf.getPage(i);
-
-      const content =
-        await page.getTextContent();
-
-      testoCompleto +=
-        " " +
-        content.items
-          .map((item) => item.str)
-          .join(" ");
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      testoCompleto += " " + content.items.map((item) => item.str).join(" ");
     }
 
-    analizzaTestoPDF(
-      testoCompleto,
-      file.name
-    );
+    // Passiamo il testo disordinato al Worker Cloudflare che interrogherà Llama 3
+    const aiData = await SyncManager.extractDataFromText(testoCompleto);
+
+    if (aiData && !aiData.error) {
+      if (aiData.importo) document.getElementById("importo").value = aiData.importo;
+      if (aiData.scadenza) document.getElementById("scadenza").value = aiData.scadenza;
+      if (aiData.numeroFattura) document.getElementById("numeroFattura").value = aiData.numeroFattura;
+      if (aiData.periodo) document.getElementById("periodoFattura").value = aiData.periodo;
+      if (aiData.fornitore) document.getElementById("fornitore").value = aiData.fornitore;
+      if (aiData.tipoFattura) document.getElementById("tipoFattura").value = aiData.tipoFattura;
+      alert("Analisi IA completata. Controlla i campi prima di salvare.");
+    } else {
+      alert("L'Intelligenza Artificiale non è riuscita a leggere correttamente il documento.");
+    }
   } catch (error) {
-    console.error(
-      "Errore lettura PDF:",
-      error
-    );
-
-    alert(
-      "Non sono riuscito a leggere questo PDF. " +
-      "Controlla che non sia una scansione fotografica."
-    );
+    console.error("Errore PDF/IA:", error);
+    alert("Errore tecnico durante la lettura del documento.");
+  } finally {
+    btn.textContent = originalText;
+    btn.disabled = false;
   }
 }
 
-function analizzaTestoPDF(testo, fileName = "") {
-  const testoPulito =
-    String(testo || "")
-      .replace(/\s+/g, " ")
-      .trim();
-
-  const importoPatterns = [
-    /totale\s+da\s+pagare\s*[:\-]?\s*€?\s*(\d{1,3}(?:\.\d{3})*,\d{2}|\d+[.,]\d{2})/i,
-    /importo\s+totale\s*[:\-]?\s*€?\s*(\d{1,3}(?:\.\d{3})*,\d{2}|\d+[.,]\d{2})/i,
-    /da\s+pagare\s*[:\-]?\s*€?\s*(\d{1,3}(?:\.\d{3})*,\d{2}|\d+[.,]\d{2})/i,
-    /totale\s*[:\-]?\s*€?\s*(\d{1,3}(?:\.\d{3})*,\d{2}|\d+[.,]\d{2})/i
-  ];
-
-  const scadenzaPatterns = [
-    /data\s+di\s+scadenza\s*[:\-]?\s*(\d{2}[\/\-.]\d{2}[\/\-.]\d{4})/i,
-    /scadenza\s*[:\-]?\s*(\d{2}[\/\-.]\d{2}[\/\-.]\d{4})/i,
-    /pagare\s+entro\s+il\s*(\d{2}[\/\-.]\d{2}[\/\-.]\d{4})/i
-  ];
-
-  const numeroPatterns = [
-    /numero\s+fattura\s*[:\-]?\s*([A-Z0-9\-\/]+)/i,
-    /fattura\s+n[°.]?\s*[:\-]?\s*([A-Z0-9\-\/]+)/i,
-    /documento\s+n[°.]?\s*[:\-]?\s*([A-Z0-9\-\/]+)/i
-  ];
-
-  const importo =
-    trovaMatch(testoPulito, importoPatterns);
-
-  const scadenza =
-    trovaMatch(testoPulito, scadenzaPatterns);
-
-  const numeroFattura =
-    trovaMatch(testoPulito, numeroPatterns);
-
-  const fornitore =
-    detectProvider(testoPulito, fileName);
-
-  const tipoUtenza =
-    detectUtilityType(
-      `${testoPulito} ${fileName}`
-    ) ||
-    riconosciTipoDaFornitore(fornitore);
-
-  const pianoRate =
-    detectRatePlan(testoPulito);
-
-  if (importo) {
-    document.getElementById("importo").value =
-      formatMoney(parseMoney(importo));
-  }
-
-  if (scadenza) {
-    document.getElementById("scadenza").value =
-      convertiDataPerInput(scadenza);
-  }
-
-  if (numeroFattura) {
-    document.getElementById("numeroFattura").value =
-      numeroFattura;
-  }
-
-  if (fornitore) {
-    document.getElementById("fornitore").value =
-      fornitore;
-  }
-
-  if (tipoUtenza) {
-    document.getElementById("tipoFattura").value =
-      tipoUtenza;
-  }
-
-  if (pianoRate.rateizzata) {
-    document.getElementById("rateizzata").checked = true;
-    toggleRateFields();
-
-    if (pianoRate.numeroRate >= 2) {
-      document.getElementById("numeroRate").value =
-        pianoRate.numeroRate;
-    }
-
-    if (pianoRate.importoRata) {
-      document.getElementById("importoRata").value =
-        pianoRate.importoRata;
-    }
-
-    if (pianoRate.primaScadenzaRata) {
-      document.getElementById("primaScadenzaRata").value =
-        pianoRate.primaScadenzaRata;
-    }
-  }
-
-  const found = [];
-
-  if (fornitore) {
-    found.push(`gestore: ${fornitore}`);
-  }
-
-  if (tipoUtenza) {
-    found.push(`tipo: ${tipoUtenza}`);
-  }
-
-  if (importo) {
-    found.push(`importo: € ${formatMoney(parseMoney(importo))}`);
-  }
-
-  if (scadenza) {
-    found.push(`scadenza: ${formatDate(convertiDataPerInput(scadenza))}`);
-  }
-
-  if (pianoRate.rateizzata) {
-    found.push("piano rate rilevato");
-  }
-
-  alert(
-    found.length
-      ? `Analisi completata.\n\n${found.join("\n")}\n\nControlla i dati prima di salvare.`
-      : "Analisi completata, ma non sono stati riconosciuti dati certi."
-  );
-}
-
+// --- GESTIONE DATABASE LOCALE INDEXED DB ---
 function initDB() {
   return new Promise((resolve, reject) => {
-    const request =
-      indexedDB.open(DB_NAME, DB_VERSION);
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-    request.onerror = () => {
-      reject(request.error);
-    };
+    request.onerror = () => reject(request.error);
 
     request.onsuccess = () => {
       db = request.result;
@@ -2154,25 +1422,9 @@ function initDB() {
     };
 
     request.onupgradeneeded = (event) => {
-      const database =
-        event.target.result;
-
-      if (
-        !database.objectStoreNames.contains(PDF_STORE)
-      ) {
-        database.createObjectStore(
-          PDF_STORE,
-          { keyPath: "id" }
-        );
-      }
-
-      if (
-        !database.objectStoreNames.contains(RECEIPT_STORE)
-      ) {
-        database.createObjectStore(
-          RECEIPT_STORE,
-          { keyPath: "id" }
-        );
+      const database = event.target.result;
+      if (!database.objectStoreNames.contains(PDF_STORE)) {
+        database.createObjectStore(PDF_STORE, { keyPath: "id" });
       }
     };
   });
@@ -2181,25 +1433,18 @@ function initDB() {
 function savePdfToDB(id, file) {
   return new Promise((resolve, reject) => {
     if (!db) {
-      reject(
-        new Error("Database non inizializzato")
-      );
+      reject(new Error("Database non inizializzato"));
       return;
     }
 
-    const transaction =
-      db.transaction(
-        [PDF_STORE],
-        "readwrite"
-      );
+    const transaction = db.transaction([PDF_STORE], "readwrite");
+    const store = transaction.objectStore(PDF_STORE);
+    const request = store.put({ id, file });
 
-    const store =
-      transaction.objectStore(PDF_STORE);
-
-    const request =
-      store.put({ id, file });
-
-    request.onsuccess = () => resolve(true);
+    request.onsuccess = () => {
+      SyncManager.pushPdf(id, file); 
+      resolve(true);
+    };
     request.onerror = () => reject(request.error);
   });
 }
@@ -2207,494 +1452,103 @@ function savePdfToDB(id, file) {
 function getPdfFromDB(id) {
   return new Promise((resolve, reject) => {
     if (!db) {
-      reject(
-        new Error("Database non inizializzato")
-      );
+      reject(new Error("Database non inizializzato"));
       return;
     }
 
-    const transaction =
-      db.transaction(
-        [PDF_STORE],
-        "readonly"
-      );
+    const transaction = db.transaction([PDF_STORE], "readonly");
+    const store = transaction.objectStore(PDF_STORE);
+    const request = store.get(id);
 
-    const store =
-      transaction.objectStore(PDF_STORE);
-
-    const request =
-      store.get(id);
-
-    request.onsuccess = () =>
-      resolve(request.result?.file || null);
-
-    request.onerror = () =>
-      reject(request.error);
+    request.onsuccess = async () => {
+      if (request.result?.file) {
+        resolve(request.result.file);
+      } else {
+        const cloudBlob = await SyncManager.getPdf(id);
+        if (cloudBlob) {
+          await savePdfToDB(id, cloudBlob); 
+          resolve(cloudBlob);
+        } else {
+          resolve(null);
+        }
+      }
+    };
+    request.onerror = () => reject(request.error);
   });
 }
 
 function deletePdfFromDB(id) {
   return new Promise((resolve, reject) => {
     if (!db) {
-      resolve(false);
+      reject(new Error("Database non inizializzato"));
       return;
     }
 
-    const transaction =
-      db.transaction(
-        [PDF_STORE],
-        "readwrite"
-      );
+    const transaction = db.transaction([PDF_STORE], "readwrite");
+    const store = transaction.objectStore(PDF_STORE);
+    const request = store.delete(id);
 
-    const store =
-      transaction.objectStore(PDF_STORE);
-
-    const request =
-      store.delete(id);
-
-    request.onsuccess = () => resolve(true);
+    request.onsuccess = () => {
+      SyncManager.deletePdf(id); 
+      resolve(true);
+    };
     request.onerror = () => reject(request.error);
   });
 }
 
 async function apriPDF(id) {
   try {
-    const file =
-      await getPdfFromDB(id);
-
+    const file = await getPdfFromDB(id);
     if (!file) {
-      alert(
-        "PDF non trovato nell'archivio locale del browser."
-      );
+      alert("PDF non trovato in locale e Cloud non raggiungibile.");
       return;
     }
 
-    const url =
-      URL.createObjectURL(file);
-
+    const url = URL.createObjectURL(file);
     window.open(url, "_blank");
 
     setTimeout(() => {
       URL.revokeObjectURL(url);
-    }, 30000);
+    }, 10000);
   } catch (error) {
-    console.error(
-      "Errore apertura PDF:",
-      error
-    );
-
-    alert(
-      "Non è stato possibile aprire il PDF."
-    );
+    console.error(error);
+    alert("Errore nell'apertura del PDF.");
   }
 }
 
-function getReceiptId(fatturaId, rataIndex) {
-  return `${fatturaId}-${rataIndex}`;
-}
-
-function saveReceiptToDB(
-  fatturaId,
-  rataIndex,
-  file
-) {
-  return new Promise((resolve, reject) => {
-    if (!db) {
-      reject(
-        new Error("Database non inizializzato")
-      );
-      return;
-    }
-
-    const transaction =
-      db.transaction(
-        [RECEIPT_STORE],
-        "readwrite"
-      );
-
-    const store =
-      transaction.objectStore(RECEIPT_STORE);
-
-    const receiptId =
-      getReceiptId(fatturaId, rataIndex);
-
-    const request =
-      store.put({
-        id: receiptId,
-        fatturaId,
-        rataIndex,
-        file,
-        fileName: file.name,
-        fileType: file.type,
-        fileSize: file.size,
-        savedAt: new Date().toISOString()
-      });
-
-    request.onsuccess = () => resolve(true);
-    request.onerror = () => reject(request.error);
-  });
-}
-
-function getReceiptFromDB(
-  fatturaId,
-  rataIndex
-) {
-  return new Promise((resolve, reject) => {
-    if (!db) {
-      reject(
-        new Error("Database non inizializzato")
-      );
-      return;
-    }
-
-    const transaction =
-      db.transaction(
-        [RECEIPT_STORE],
-        "readonly"
-      );
-
-    const store =
-      transaction.objectStore(RECEIPT_STORE);
-
-    const receiptId =
-      getReceiptId(fatturaId, rataIndex);
-
-    const request =
-      store.get(receiptId);
-
-    request.onsuccess = () =>
-      resolve(request.result || null);
-
-    request.onerror = () =>
-      reject(request.error);
-  });
-}
-
-function deleteReceiptFromDB(
-  fatturaId,
-  rataIndex
-) {
-  return new Promise((resolve, reject) => {
-    if (!db) {
-      resolve(false);
-      return;
-    }
-
-    const transaction =
-      db.transaction(
-        [RECEIPT_STORE],
-        "readwrite"
-      );
-
-    const store =
-      transaction.objectStore(RECEIPT_STORE);
-
-    const receiptId =
-      getReceiptId(fatturaId, rataIndex);
-
-    const request =
-      store.delete(receiptId);
-
-    request.onsuccess = () => resolve(true);
-    request.onerror = () => reject(request.error);
-  });
-}
-
-async function uploadReceipt(
-  fatturaIndex,
-  rataIndex
-) {
-  const fattura =
-    fatture[fatturaIndex];
-
-  if (
-    !fattura ||
-    !Array.isArray(fattura.rate) ||
-    !fattura.rate[rataIndex]
-  ) {
-    alert("Rata non trovata.");
-    return;
-  }
-
-  const inputId =
-    `receipt-${fattura.id}-${rataIndex}`;
-
-  const input =
-    document.getElementById(inputId);
-
-  const file =
-    input?.files?.[0];
-
-  if (!file) {
-    alert(
-      "Seleziona prima una foto o un PDF."
-    );
-    return;
-  }
-
-  const allowedTypes = [
-    "application/pdf",
-    "image/jpeg",
-    "image/png",
-    "image/webp"
-  ];
-
-  if (!allowedTypes.includes(file.type)) {
-    alert(
-      "Formato non valido. Usa PDF, JPG, PNG o WebP."
-    );
-    return;
-  }
-
-  const maxSize =
-    15 * 1024 * 1024;
-
-  if (file.size > maxSize) {
-    alert(
-      "Il file non può superare 15 MB."
-    );
-    return;
-  }
-
-  try {
-    await saveReceiptToDB(
-      fattura.id,
-      rataIndex,
-      file
-    );
-
-    fattura.rate[rataIndex].receiptMeta = {
-      name: file.name,
-      type: file.type,
-      size: file.size,
-      savedAt:
-        new Date().toISOString()
-    };
-
-    saveData();
-    renderFatture();
-
-    alert(
-      "Ricevuta salvata correttamente."
-    );
-  } catch (error) {
-    console.error(
-      "Errore salvataggio ricevuta:",
-      error
-    );
-
-    alert(
-      "Non è stato possibile salvare la ricevuta."
-    );
-  }
-}
-
-async function openReceipt(
-  fatturaIndex,
-  rataIndex
-) {
-  const fattura =
-    fatture[fatturaIndex];
-
-  if (!fattura) {
-    alert("Fattura non trovata.");
-    return;
-  }
-
-  try {
-    const receipt =
-      await getReceiptFromDB(
-        fattura.id,
-        rataIndex
-      );
-
-    if (!receipt?.file) {
-      alert("Ricevuta non trovata.");
-      return;
-    }
-
-    const url =
-      URL.createObjectURL(receipt.file);
-
-    window.open(url, "_blank");
-
-    setTimeout(() => {
-      URL.revokeObjectURL(url);
-    }, 30000);
-  } catch (error) {
-    console.error(
-      "Errore apertura ricevuta:",
-      error
-    );
-
-    alert(
-      "Non è stato possibile aprire la ricevuta."
-    );
-  }
-}
-
-async function removeReceipt(
-  fatturaIndex,
-  rataIndex
-) {
-  const fattura =
-    fatture[fatturaIndex];
-
-  if (
-    !fattura ||
-    !fattura.rate?.[rataIndex]
-  ) {
-    alert("Rata non trovata.");
-    return;
-  }
-
-  const conferma = confirm(
-    "Vuoi eliminare la ricevuta allegata a questa rata?"
-  );
-
-  if (!conferma) return;
-
-  try {
-    await deleteReceiptFromDB(
-      fattura.id,
-      rataIndex
-    );
-
-    fattura.rate[rataIndex].receiptMeta = null;
-
-    saveData();
-    renderFatture();
-
-    alert("Ricevuta eliminata.");
-  } catch (error) {
-    console.error(
-      "Errore eliminazione ricevuta:",
-      error
-    );
-
-    alert(
-      "Non è stato possibile eliminare la ricevuta."
-    );
-  }
-}
-
-function updateInstallmentDate(
-  fatturaIndex,
-  rataIndex
-) {
-  const fattura =
-    fatture[fatturaIndex];
-
-  if (
-    !fattura ||
-    !fattura.rate?.[rataIndex]
-  ) {
-    alert("Rata non trovata.");
-    return;
-  }
-
-  const inputId =
-    `installment-date-${fattura.id}-${rataIndex}`;
-
-  const input =
-    document.getElementById(inputId);
-
-  const nuovaData =
-    input?.value;
-
-  if (!nuovaData) {
-    alert("Inserisci una data valida.");
-    return;
-  }
-
-  fattura.rate[rataIndex].scadenza =
-    nuovaData;
-
-  if (rataIndex === 0) {
-    fattura.primaScadenzaRata =
-      nuovaData;
-  }
-
-  saveData();
-  refreshAll();
-
-  alert(
-    "Scadenza della rata aggiornata."
-  );
-}
-
-async function deleteAllInvoiceReceipts(fattura) {
-  if (
-    !fattura ||
-    !Array.isArray(fattura.rate)
-  ) {
-    return;
-  }
-
-  await Promise.all(
-    fattura.rate.map((_, rataIndex) =>
-      deleteReceiptFromDB(
-        fattura.id,
-        rataIndex
-      ).catch(() => null)
-    )
-  );
-}
-
+// --- BACKUP LOCALE E NOTIFICHE PUSH ---
 function esportaBackup() {
   const data = {
-    version: 2,
-    exportedAt:
-      new Date().toISOString(),
+    version: 1,
+    exportedAt: new Date().toISOString(),
     utenze,
     fatture,
     autoletture
   };
 
-  const blob =
-    new Blob(
-      [JSON.stringify(data, null, 2)],
-      { type: "application/json" }
-    );
-
-  const url =
-    URL.createObjectURL(blob);
-
-  const a =
-    document.createElement("a");
-
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
   a.href = url;
   a.download = "backup-utenze.json";
   a.click();
-
   URL.revokeObjectURL(url);
 }
 
 function importaBackup() {
-  const file =
-    document.getElementById("backupFile").files[0];
+  const file = document.getElementById("backupFile").files[0];
 
   if (!file) {
-    alert(
-      "Seleziona prima un file di backup JSON."
-    );
+    alert("Seleziona prima un file di backup JSON.");
     return;
   }
 
-  const reader =
-    new FileReader();
-
-  reader.onload = function (event) {
+  const reader = new FileReader();
+  reader.onload = function (e) {
     try {
-      const data =
-        JSON.parse(event.target.result);
+      const data = JSON.parse(e.target.result);
 
-      if (
-        !data ||
-        !Array.isArray(data.utenze) ||
-        !Array.isArray(data.fatture) ||
-        !Array.isArray(data.autoletture)
-      ) {
+      if (!data || !Array.isArray(data.utenze) || !Array.isArray(data.fatture) || !Array.isArray(data.autoletture)) {
         alert("File backup non valido.");
         return;
       }
@@ -2702,23 +1556,13 @@ function importaBackup() {
       utenze = data.utenze;
       fatture = data.fatture;
       autoletture = data.autoletture;
-
-      normalizeStoredData();
       saveData();
       refreshAll();
 
-      alert(
-        "Backup importato correttamente."
-      );
+      alert("Backup importato correttamente.");
     } catch (error) {
-      console.error(
-        "Errore importazione backup:",
-        error
-      );
-
-      alert(
-        "Errore durante l'importazione del backup."
-      );
+      console.error(error);
+      alert("Errore durante l'importazione del backup.");
     }
   };
 
@@ -2727,74 +1571,37 @@ function importaBackup() {
 
 async function richiediPermessoNotifiche() {
   if (!("Notification" in window)) {
-    alert(
-      "Questo browser non supporta le notifiche."
-    );
+    alert("Questo browser non supporta le notifiche.");
     return;
   }
 
-  const permission =
-    await Notification.requestPermission();
+  const permission = await Notification.requestPermission();
 
-  if (permission === "granted") {
-    alert("Notifiche browser attivate.");
-  } else {
-    alert(
-      "Permesso notifiche non concesso."
-    );
-  }
+  if (permission === "granted") alert("Notifiche browser attivate.");
+  else alert("Permesso notifiche non concesso.");
 }
 
-function inviaNotificaBrowser(
-  titolo,
-  corpo
-) {
+function inviaNotificaBrowser(titolo, corpo) {
   if (!("Notification" in window)) return;
+  if (Notification.permission !== "granted") return;
 
-  if (Notification.permission !== "granted") {
-    return;
-  }
-
-  new Notification(titolo, {
-    body: corpo
-  });
+  new Notification(titolo, { body: corpo });
 }
 
-function controllaENotificaScadenze(
-  forzaManuale = false
-) {
-  const notifiche =
-    raccogliNotifiche();
-
-  const chiaviInviate =
-    JSON.parse(
-      localStorage.getItem("notificheInviate")
-    ) || {};
-
-  const oggi =
-    new Date().toISOString().slice(0, 10);
+function controllaENotificaScadenze(forzaManuale = false) {
+  const notifiche = raccogliNotifiche();
+  const chiaviInviate = JSON.parse(localStorage.getItem("notificheInviate")) || {};
+  const oggi = new Date().toISOString().slice(0, 10);
 
   notifiche.forEach((n) => {
-    const key =
-      `${oggi}-${n.testo}`;
-
-    if (
-      forzaManuale ||
-      !chiaviInviate[key]
-    ) {
-      inviaNotificaBrowser(
-        "Promemoria Gestione Utenze",
-        n.testo
-      );
-
+    const key = `${oggi}-${n.testo}`;
+    if (forzaManuale || !chiaviInviate[key]) {
+      inviaNotificaBrowser("Promemoria Gestione Utenze", n.testo);
       chiaviInviate[key] = true;
     }
   });
 
-  localStorage.setItem(
-    "notificheInviate",
-    JSON.stringify(chiaviInviate)
-  );
+  localStorage.setItem("notificheInviate", JSON.stringify(chiaviInviate));
 }
 
 initApp();
