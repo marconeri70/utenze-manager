@@ -13,6 +13,7 @@ let selectedFattureIds = new Set();
 // --- GESTIONE CLOUD SYNC & AI ---
 const SyncManager = {
   config: JSON.parse(localStorage.getItem("syncConfig")) || { url: "", secret: "" },
+  lastError: "",
   
   saveConfig(url, secret) {
     this.config = { url: url.replace(/\/$/, ""), secret };
@@ -108,27 +109,73 @@ const SyncManager = {
   },
 
   async extractDataFromText(text) {
+    this.lastError = "";
+
+    const cleanText = String(text || "")
+      .replace(/\u0000/g, "")
+      .replace(/[ \t]+/g, " ")
+      .trim();
+
     if (!this.config.url || !this.config.secret) {
+      this.lastError = "URL del Worker o token di sicurezza non configurati.";
       alert("Configura prima il Cloudflare Worker nelle impostazioni Cloud.");
       return null;
     }
-    this.updateStatus('syncing');
+
+    if (cleanText.length < 25) {
+      this.lastError =
+        "Il PDF non contiene testo selezionabile. Probabilmente è una scansione o un'immagine.";
+      return null;
+    }
+
+    this.updateStatus("syncing");
+
     try {
+      const textForAI = cleanText.slice(0, 120000);
+
       const res = await fetch(`${this.config.url}/sync/extract`, {
-        method: 'POST',
-        headers: { 
-          'Authorization': `Bearer ${this.config.secret}`,
-          'Content-Type': 'application/json'
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.config.secret}`,
+          "Content-Type": "application/json"
         },
-        body: JSON.stringify({ text })
+        body: JSON.stringify({ text: textForAI })
       });
-      if (!res.ok) throw new Error("Errore chiamata AI");
-      const data = await res.json();
-      this.updateStatus('idle');
-      return data;
-    } catch(e) { 
-      console.error(e);
-      this.updateStatus('error'); 
+
+      const rawResponse = await res.text();
+      let responseData = null;
+
+      if (rawResponse) {
+        try {
+          responseData = JSON.parse(rawResponse);
+        } catch {
+          responseData = rawResponse;
+        }
+      }
+
+      if (!res.ok) {
+        const detail =
+          typeof responseData === "object" && responseData
+            ? responseData.error || responseData.message || JSON.stringify(responseData)
+            : String(responseData || res.statusText || "Errore sconosciuto");
+
+        throw new Error(`Worker ${res.status}: ${detail}`);
+      }
+
+      const normalized = normalizeAIResponse(responseData);
+
+      if (normalized?.error) {
+        this.lastError = String(normalized.error);
+        this.updateStatus("error");
+        return normalized;
+      }
+
+      this.updateStatus("idle");
+      return normalized;
+    } catch (error) {
+      console.error("Errore Worker/AI:", error);
+      this.lastError = error?.message || "Errore sconosciuto durante la chiamata al Worker.";
+      this.updateStatus("error");
       return null;
     }
   }
@@ -136,18 +183,26 @@ const SyncManager = {
 
 function saveSyncConfig() {
   let rawUrl = document.getElementById("syncUrl").value.trim();
-  const secret = document.getElementById("syncSecret").value.trim();
-  
+  const secretInput = document.getElementById("syncSecret");
+  let secret = secretInput.value.trim();
+
+  if (!secret || secret === "********") {
+    secret = SyncManager.config.secret || "";
+  }
+
   const urlMatch = rawUrl.match(/(https?:\/\/[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?:\/[^\s)]*)?)/);
   const cleanUrl = urlMatch ? urlMatch[1] : rawUrl;
-  
+
   document.getElementById("syncUrl").value = cleanUrl;
 
   if (!cleanUrl || !secret) {
     alert("Compila URL del Worker e Token di sicurezza.");
     return;
   }
+
   SyncManager.saveConfig(cleanUrl, secret);
+  secretInput.value = "";
+  secretInput.placeholder = "Token già salvato (lascia vuoto per mantenerlo)";
   alert("Configurazione Cloud salvata e download avviato.");
 }
 
@@ -159,7 +214,11 @@ async function initApp() {
     const retroCleanUrl = SyncManager.config.url.match(/(https?:\/\/[^\s)]+)/)?.[1] || SyncManager.config.url;
     
     document.getElementById("syncUrl").value = retroCleanUrl;
-    document.getElementById("syncSecret").value = SyncManager.config.secret ? "********" : "";
+    const syncSecretInput = document.getElementById("syncSecret");
+    syncSecretInput.value = "";
+    syncSecretInput.placeholder = SyncManager.config.secret
+      ? "Token già salvato (lascia vuoto per mantenerlo)"
+      : "Token di sicurezza (Bearer)";
     
     if (retroCleanUrl !== SyncManager.config.url) {
       SyncManager.saveConfig(retroCleanUrl, SyncManager.config.secret);
@@ -1514,67 +1573,424 @@ function renderStats() {
 }
 
 // --- LETTURA PDF E INTEGRAZIONE AI CLOUDFLARE ---
+function parsePossibleJson(value) {
+  if (typeof value !== "string") return value;
+
+  const cleaned = value
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const firstBrace = cleaned.indexOf("{");
+    const lastBrace = cleaned.lastIndexOf("}");
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      try {
+        return JSON.parse(cleaned.slice(firstBrace, lastBrace + 1));
+      } catch {
+        return value;
+      }
+    }
+    return value;
+  }
+}
+
+function normalizeAIResponse(payload) {
+  let current = payload;
+
+  for (let i = 0; i < 6; i++) {
+    current = parsePossibleJson(current);
+
+    if (!current || typeof current !== "object") break;
+
+    const hasBillFields = [
+      "fornitore",
+      "supplier",
+      "importo",
+      "amount",
+      "scadenza",
+      "dueDate",
+      "numeroFattura",
+      "numero_fattura",
+      "tipoFattura",
+      "tipo_utenza",
+      "pod",
+      "pdr"
+    ].some((key) => key in current);
+
+    if (hasBillFields || current.error) break;
+
+    if (current.data != null) {
+      current = current.data;
+      continue;
+    }
+    if (current.result != null) {
+      current = current.result;
+      continue;
+    }
+    if (current.response != null) {
+      current = current.response;
+      continue;
+    }
+    if (current.output != null) {
+      current = current.output;
+      continue;
+    }
+
+    break;
+  }
+
+  current = parsePossibleJson(current);
+
+  if (!current || typeof current !== "object" || Array.isArray(current)) {
+    return current ? { error: "Il Worker ha restituito una risposta non riconosciuta." } : null;
+  }
+
+  const normalized = {
+    ...current,
+    fornitore: current.fornitore || current.supplier || current.gestore || "",
+    tipoFattura:
+      current.tipoFattura ||
+      current.tipo_fattura ||
+      current.tipoUtenza ||
+      current.tipo_utenza ||
+      current.utilityType ||
+      "",
+    importo: current.importo || current.amount || current.totale || "",
+    scadenza:
+      current.scadenza ||
+      current.dataScadenza ||
+      current.data_scadenza ||
+      current.dueDate ||
+      "",
+    numeroFattura:
+      current.numeroFattura ||
+      current.numero_fattura ||
+      current.invoiceNumber ||
+      "",
+    periodo:
+      current.periodo ||
+      current.periodoFattura ||
+      current.periodo_fattura ||
+      current.billingPeriod ||
+      "",
+    codiceCliente:
+      current.codiceCliente ||
+      current.codice_cliente ||
+      current.customerCode ||
+      "",
+    indirizzoFornitura:
+      current.indirizzoFornitura ||
+      current.indirizzo_fornitura ||
+      current.supplyAddress ||
+      "",
+    consumo: current.consumo || current.consumption || "",
+    unitaConsumo:
+      current.unitaConsumo ||
+      current.unita_consumo ||
+      current.consumptionUnit ||
+      "",
+    numeroRate:
+      current.numeroRate ||
+      current.numero_rate ||
+      current.installmentCount ||
+      0,
+    importoRata:
+      current.importoRata ||
+      current.importo_rata ||
+      current.installmentAmount ||
+      "",
+    primaScadenzaRata:
+      current.primaScadenzaRata ||
+      current.prima_scadenza_rata ||
+      current.firstInstallmentDueDate ||
+      ""
+  };
+
+  if (!normalized.tipoFattura) {
+    normalized.tipoFattura = detectUtilityType(
+      `${normalized.fornitore} ${current.testo || ""}`
+    );
+  }
+
+  return normalized;
+}
+
+function normalizeDateForInput(value) {
+  if (!value) return "";
+
+  const raw = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+
+  const match = raw.match(/\b(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})\b/);
+  if (!match) return "";
+
+  let [, day, month, year] = match;
+  if (year.length === 2) year = `20${year}`;
+
+  return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+}
+
+function cleanExtractedMoney(value) {
+  if (!value) return "";
+  const match = String(value).match(/(\d{1,3}(?:[.\s]\d{3})*(?:,\d{2})|\d+(?:[.,]\d{2}))/);
+  return match ? match[1].replace(/\s/g, "") : "";
+}
+
+function extractLocalBillData(text) {
+  const source = String(text || "").replace(/\s+/g, " ").trim();
+  const lower = source.toLowerCase();
+  const data = {};
+
+  const providers = [
+    ["Enel Energia", /\benel(?:\s+energia)?\b/i],
+    ["Servizio Elettrico Nazionale", /servizio elettrico nazionale/i],
+    ["Plenitude", /\bplenitude\b|\beni gas e luce\b/i],
+    ["Acea", /\bacea\b/i],
+    ["A2A Energia", /\ba2a(?:\s+energia)?\b/i],
+    ["Sorgenia", /\bsorgenia\b/i],
+    ["Edison Energia", /\bedison(?:\s+energia)?\b/i],
+    ["Hera", /\bhera\b/i],
+    ["Fastweb", /\bfastweb\b/i],
+    ["TIM", /\b(?:tim|telecom italia)\b/i],
+    ["Vodafone", /\bvodafone\b/i],
+    ["WindTre", /\bwind\s*tre\b|\bwind3\b/i],
+    ["Iliad", /\biliad\b/i],
+    ["Sky", /\bsky\b/i]
+  ];
+
+  const provider = providers.find(([, regex]) => regex.test(source));
+  if (provider) data.fornitore = provider[0];
+
+  data.tipoFattura = detectUtilityType(source) || "";
+
+  const amountPatterns = [
+    /(?:totale\s+(?:da\s+pagare|bolletta)|importo\s+(?:da\s+pagare|totale)|da\s+pagare)\s*[:€]?\s*€?\s*([0-9.\s]+,\d{2})/i,
+    /€\s*([0-9.\s]+,\d{2})/i
+  ];
+
+  for (const pattern of amountPatterns) {
+    const match = source.match(pattern);
+    if (match) {
+      data.importo = cleanExtractedMoney(match[1]);
+      break;
+    }
+  }
+
+  const dueMatch = source.match(
+    /(?:data\s+di\s+scadenza|scadenza|entro\s+il)\s*[:\-]?\s*(\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4})/i
+  );
+  if (dueMatch) data.scadenza = normalizeDateForInput(dueMatch[1]);
+
+  const invoiceMatch = source.match(
+    /(?:numero|n\.?|nr\.?)\s*(?:della\s+)?fattura\s*[:\-]?\s*([A-Z0-9\/._-]{3,})/i
+  );
+  if (invoiceMatch) data.numeroFattura = invoiceMatch[1];
+
+  const podMatch = source.match(/\bPOD\s*[:\-]?\s*(IT[0-9A-Z]{10,20})\b/i);
+  if (podMatch) data.pod = podMatch[1].toUpperCase();
+
+  const pdrMatch = source.match(/\bPDR\s*[:\-]?\s*([0-9]{10,20})\b/i);
+  if (pdrMatch) data.pdr = pdrMatch[1];
+
+  const customerMatch = source.match(
+    /(?:codice\s+cliente|numero\s+cliente|cod\.\s*cliente)\s*[:\-]?\s*([A-Z0-9._\/-]{3,})/i
+  );
+  if (customerMatch) data.codiceCliente = customerMatch[1];
+
+  const consumptionPatterns = [
+    [/([0-9.,]+)\s*kWh\b/i, "kWh"],
+    [/([0-9.,]+)\s*Smc\b/i, "Smc"],
+    [/([0-9.,]+)\s*m[³3]\b/i, "mc"]
+  ];
+
+  for (const [pattern, unit] of consumptionPatterns) {
+    const match = source.match(pattern);
+    if (match) {
+      data.consumo = match[1];
+      data.unitaConsumo = unit;
+      break;
+    }
+  }
+
+  const installmentMatch = lower.match(
+    /(?:rateizz(?:azione|ata)|piano\s+rate)[^0-9]{0,30}(\d{1,2})\s+rate(?:\s+da)?\s*€?\s*([0-9.,]+)?/i
+  );
+
+  if (installmentMatch) {
+    data.numeroRate = Number(installmentMatch[1]);
+    if (installmentMatch[2]) data.importoRata = cleanExtractedMoney(installmentMatch[2]);
+  }
+
+  return data;
+}
+
+function hasUsefulBillData(data) {
+  if (!data || typeof data !== "object") return false;
+  return Boolean(
+    data.fornitore ||
+    data.importo ||
+    data.scadenza ||
+    data.numeroFattura ||
+    data.pod ||
+    data.pdr
+  );
+}
+
+function applyExtractedBillData(data) {
+  if (!data || typeof data !== "object") return;
+
+  const setValue = (id, value) => {
+    const element = document.getElementById(id);
+    if (element && value !== undefined && value !== null && String(value).trim() !== "") {
+      element.value = String(value).trim();
+    }
+  };
+
+  setValue("fornitore", data.fornitore);
+  setValue("tipoFattura", data.tipoFattura);
+  setValue("importo", cleanExtractedMoney(data.importo) || data.importo);
+  setValue("scadenza", normalizeDateForInput(data.scadenza) || data.scadenza);
+  setValue("numeroFattura", data.numeroFattura);
+  setValue("periodoFattura", data.periodo || data.periodoFattura);
+  setValue("pod", data.pod);
+  setValue("pdr", data.pdr);
+  setValue("codiceCliente", data.codiceCliente);
+  setValue("indirizzoFornitura", data.indirizzoFornitura);
+  setValue("consumo", data.consumo);
+  setValue("unitaConsumo", data.unitaConsumo);
+
+  const numeroRateAI = Number(data.numeroRate || data.rate?.length || 0);
+  const primaScadenzaAI =
+    normalizeDateForInput(data.primaScadenzaRata || data.rate?.[0]?.scadenza || "");
+  const importoRataAI = data.importoRata || data.rate?.[0]?.importo || "";
+
+  if (numeroRateAI >= 2) {
+    document.getElementById("rateizzata").checked = true;
+    toggleRateFields();
+    document.getElementById("numeroRate").value = numeroRateAI;
+
+    if (primaScadenzaAI) {
+      document.getElementById("primaScadenzaRata").value = primaScadenzaAI;
+    }
+
+    if (importoRataAI) {
+      document.getElementById("importoRata").value =
+        cleanExtractedMoney(importoRataAI) || importoRataAI;
+    }
+  }
+}
+
+async function verificaCollegamentoAI() {
+  const result = await SyncManager.extractDataFromText(
+    "Fattura di prova Enel Energia. Totale da pagare euro 25,50. Scadenza 31/12/2026. POD IT001E123456789."
+  );
+
+  if (result && !result.error) {
+    alert("Collegamento al Worker e all'Intelligenza Artificiale funzionante.");
+    return;
+  }
+
+  alert(
+    "Collegamento AI non riuscito.\n\nMotivo: " +
+      (result?.error || SyncManager.lastError || "Risposta non valida del Worker.")
+  );
+}
+
 async function leggiPDF() {
   const file = document.getElementById("pdf").files[0];
+
   if (!file) {
     alert("Carica prima un PDF.");
     return;
   }
 
-  // Feedback visivo: l'IA richiede qualche secondo
   const btn = document.querySelector("button[onclick='leggiPDF()']");
-  const originalText = btn.textContent;
-  btn.textContent = "Analisi IA in corso (attendere)...";
-  btn.disabled = true;
+  const originalText = btn?.textContent || "Importa dati da PDF";
+
+  if (btn) {
+    btn.textContent = "Analisi IA in corso (attendere)...";
+    btn.disabled = true;
+  }
 
   try {
+    if (window.pdfjsLib?.GlobalWorkerOptions) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+    }
+
     const arrayBuffer = await file.arrayBuffer();
     const typedArray = new Uint8Array(arrayBuffer);
-    const pdf = await pdfjsLib.getDocument(typedArray).promise;
+    const pdf = await pdfjsLib.getDocument({ data: typedArray }).promise;
 
     let testoCompleto = "";
+
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
       const content = await page.getTextContent();
-      testoCompleto += " " + content.items.map((item) => item.str).join(" ");
+
+      testoCompleto +=
+        "\n" +
+        content.items
+          .map((item) => `${item.str || ""}${item.hasEOL ? "\n" : " "}`)
+          .join("");
     }
 
-    // Passiamo il testo disordinato al Worker Cloudflare che interrogherà Llama 3
+    testoCompleto = testoCompleto.replace(/\u0000/g, "").trim();
+
+    if (testoCompleto.length < 25) {
+      alert(
+        "Il PDF è stato aperto, ma non contiene testo selezionabile.\n\n" +
+          "Probabilmente è una scansione o una fotografia salvata in PDF. " +
+          "Per questo documento serve il riconoscimento OCR delle immagini."
+      );
+      return;
+    }
+
+    const localData = extractLocalBillData(testoCompleto);
     const aiData = await SyncManager.extractDataFromText(testoCompleto);
 
     if (aiData && !aiData.error) {
-      if (aiData.importo) document.getElementById("importo").value = aiData.importo;
-      if (aiData.scadenza) document.getElementById("scadenza").value = aiData.scadenza;
-      if (aiData.numeroFattura) document.getElementById("numeroFattura").value = aiData.numeroFattura;
-      if (aiData.periodo) document.getElementById("periodoFattura").value = aiData.periodo;
-      if (aiData.fornitore) document.getElementById("fornitore").value = aiData.fornitore;
-      if (aiData.tipoFattura) document.getElementById("tipoFattura").value = aiData.tipoFattura;
-      if (aiData.pod) document.getElementById("pod").value = aiData.pod;
-      if (aiData.pdr) document.getElementById("pdr").value = aiData.pdr;
-      if (aiData.codiceCliente) document.getElementById("codiceCliente").value = aiData.codiceCliente;
-      if (aiData.indirizzoFornitura) document.getElementById("indirizzoFornitura").value = aiData.indirizzoFornitura;
-      if (aiData.consumo) document.getElementById("consumo").value = aiData.consumo;
-      if (aiData.unitaConsumo) document.getElementById("unitaConsumo").value = aiData.unitaConsumo;
-      const numeroRateAI = Number(aiData.numeroRate || aiData.rate?.length || 0);
-      const primaScadenzaAI = aiData.primaScadenzaRata || aiData.rate?.[0]?.scadenza || "";
-      const importoRataAI = aiData.importoRata || aiData.rate?.[0]?.importo || "";
-      if (numeroRateAI >= 2 && primaScadenzaAI) {
-        document.getElementById("rateizzata").checked = true;
-        toggleRateFields();
-        document.getElementById("numeroRate").value = numeroRateAI;
-        document.getElementById("primaScadenzaRata").value = primaScadenzaAI;
-        if (importoRataAI) document.getElementById("importoRata").value = importoRataAI;
-      }
-      alert("Analisi IA completata. Controlla i campi prima di salvare.");
-    } else {
-      alert("L'Intelligenza Artificiale non è riuscita a leggere correttamente il documento.");
+      const mergedData = { ...localData, ...aiData };
+      applyExtractedBillData(mergedData);
+
+      alert("Analisi completata. Controlla i campi prima di salvare.");
+      return;
     }
+
+    if (hasUsefulBillData(localData)) {
+      applyExtractedBillData(localData);
+
+      alert(
+        "L'Intelligenza Artificiale non ha risposto correttamente, " +
+          "ma l'app ha recuperato alcuni dati direttamente dal PDF.\n\n" +
+          "Motivo AI: " +
+          (aiData?.error || SyncManager.lastError || "Risposta non valida del Worker.") +
+          "\n\nControlla e completa i campi prima di salvare."
+      );
+      return;
+    }
+
+    alert(
+      "Analisi non completata.\n\nMotivo: " +
+        (aiData?.error || SyncManager.lastError || "Il Worker non ha restituito dati validi.") +
+        "\n\nControlla il collegamento Cloudflare e verifica che il PDF contenga testo selezionabile."
+    );
   } catch (error) {
     console.error("Errore PDF/IA:", error);
-    alert("Errore tecnico durante la lettura del documento.");
+
+    alert(
+      "Errore tecnico durante la lettura del documento.\n\nDettaglio: " +
+        (error?.message || "errore sconosciuto")
+    );
   } finally {
-    btn.textContent = originalText;
-    btn.disabled = false;
+    if (btn) {
+      btn.textContent = originalText;
+      btn.disabled = false;
+    }
   }
 }
 
