@@ -661,6 +661,9 @@ function renderUtenze() {
 }
 
 function clearFatturaForm() {
+  const editId = document.getElementById("editFatturaId");
+  if (editId) editId.value = "";
+
   document.getElementById("fornitore").value = "";
   document.getElementById("tipoFattura").value = "";
   document.getElementById("scadenza").value = "";
@@ -680,6 +683,134 @@ function clearFatturaForm() {
   document.getElementById("primaScadenzaRata").value = "";
   document.getElementById("frequenzaRate").value = "mensile";
   toggleRateFields();
+
+  const title = document.getElementById("fatturaFormTitle");
+  const saveButton = document.getElementById("btnSalvaFattura");
+  const cancelButton = document.getElementById("btnAnnullaFattura");
+  const pdfInfo = document.getElementById("existingPdfInfo");
+
+  if (title) title.textContent = "Nuova Fattura";
+  if (saveButton) saveButton.textContent = "Salva fattura";
+  if (cancelButton) cancelButton.classList.add("hidden");
+  if (pdfInfo) {
+    pdfInfo.textContent = "";
+    pdfInfo.classList.add("hidden");
+  }
+}
+
+function cancelEditFattura() {
+  clearFatturaForm();
+  showSection("archivio");
+  renderFatture();
+}
+
+function formatConsumoScheda(consumo, unita) {
+  const valore = String(consumo || "").trim();
+  const misura = String(unita || "").trim();
+
+  if (!valore) return "";
+  if (!misura) return valore;
+
+  const valoreNormalizzato = valore.toLowerCase().replace(/\s+/g, "");
+  const misuraNormalizzata = misura.toLowerCase().replace(/\s+/g, "");
+
+  return valoreNormalizzato.endsWith(misuraNormalizzata)
+    ? valore
+    : `${valore} ${misura}`;
+}
+
+function editFattura(fatturaId, creaRateizzazione = false) {
+  const fattura = fatture.find((item) => Number(item.id) === Number(fatturaId));
+
+  if (!fattura) {
+    alert("Fattura non trovata.");
+    return;
+  }
+
+  showSection("fatture");
+
+  document.getElementById("editFatturaId").value = fattura.id;
+  document.getElementById("fornitore").value = fattura.fornitore || "";
+  document.getElementById("tipoFattura").value = fattura.tipoFattura || "";
+  document.getElementById("scadenza").value = fattura.scadenza || "";
+  document.getElementById("importo").value = fattura.importo || "";
+  document.getElementById("numeroFattura").value = fattura.numeroFattura || "";
+  document.getElementById("periodoFattura").value = fattura.periodoFattura || "";
+  document.getElementById("pod").value = fattura.pod || "";
+  document.getElementById("pdr").value = fattura.pdr || "";
+  document.getElementById("codiceCliente").value = fattura.codiceCliente || "";
+  document.getElementById("indirizzoFornitura").value = fattura.indirizzoFornitura || "";
+  document.getElementById("consumo").value = fattura.consumo || "";
+  document.getElementById("unitaConsumo").value = fattura.unitaConsumo || "";
+  document.getElementById("pdf").value = "";
+
+  const abilitaRateizzazione = !!fattura.rateizzata || !!creaRateizzazione;
+  document.getElementById("rateizzata").checked = abilitaRateizzazione;
+  toggleRateFields();
+
+  if (fattura.rateizzata) {
+    document.getElementById("numeroRate").value =
+      fattura.numeroRate || fattura.rate?.length || "";
+    document.getElementById("importoRata").value = fattura.importoRata || "";
+    document.getElementById("primaScadenzaRata").value =
+      fattura.primaScadenzaRata || fattura.rate?.[0]?.scadenza || "";
+    document.getElementById("frequenzaRate").value =
+      fattura.frequenzaRate || "mensile";
+  } else if (creaRateizzazione) {
+    const numeroRatePredefinito = 2;
+    document.getElementById("numeroRate").value = numeroRatePredefinito;
+    document.getElementById("importoRata").value =
+      parseMoney(fattura.importo)
+        ? formatMoney(parseMoney(fattura.importo) / numeroRatePredefinito)
+        : "";
+    document.getElementById("primaScadenzaRata").value =
+      fattura.scadenza || new Date().toISOString().slice(0, 10);
+    document.getElementById("frequenzaRate").value = "mensile";
+  } else {
+    document.getElementById("numeroRate").value = "";
+    document.getElementById("importoRata").value = "";
+    document.getElementById("primaScadenzaRata").value = "";
+    document.getElementById("frequenzaRate").value = "mensile";
+  }
+
+  const title = document.getElementById("fatturaFormTitle");
+  const saveButton = document.getElementById("btnSalvaFattura");
+  const cancelButton = document.getElementById("btnAnnullaFattura");
+  const pdfInfo = document.getElementById("existingPdfInfo");
+
+  if (title) {
+    title.textContent = creaRateizzazione
+      ? "Crea rateizzazione"
+      : "Modifica Fattura";
+  }
+
+  if (saveButton) {
+    saveButton.textContent = creaRateizzazione
+      ? "Salva rateizzazione"
+      : "Aggiorna fattura";
+  }
+
+  if (cancelButton) cancelButton.classList.remove("hidden");
+
+  if (pdfInfo) {
+    if (fattura.pdfMeta?.name) {
+      pdfInfo.textContent =
+        `PDF già allegato: ${fattura.pdfMeta.name}. ` +
+        "Se non scegli un nuovo file, quello attuale resterà invariato.";
+    } else {
+      pdfInfo.textContent =
+        "Nessun PDF allegato. Puoi aggiungerne uno durante la modifica.";
+    }
+    pdfInfo.classList.remove("hidden");
+  }
+
+  requestAnimationFrame(() => {
+    document.getElementById("fatturaFormCard")?.scrollIntoView({
+      behavior: "smooth",
+      block: "start"
+    });
+    document.getElementById("fornitore")?.focus();
+  });
 }
 
 function clearAutoletturaForm() {
@@ -718,6 +849,13 @@ function generaPianoRate(numeroRate, importoRata, primaScadenza, frequenza) {
 }
 
 async function addFattura() {
+  const editIdRaw = document.getElementById("editFatturaId")?.value || "";
+  const editId = editIdRaw ? Number(editIdRaw) : null;
+  const existingIndex = editId === null
+    ? -1
+    : fatture.findIndex((item) => Number(item.id) === editId);
+  const existing = existingIndex >= 0 ? fatture[existingIndex] : null;
+
   const fornitore = document.getElementById("fornitore").value.trim();
   const tipoFattura = document.getElementById("tipoFattura").value;
   const scadenza = document.getElementById("scadenza").value;
@@ -760,8 +898,63 @@ async function addFattura() {
     }
   }
 
-  const id = Date.now();
-  let pdfMeta = null;
+  let rate = [];
+  let ricevuteDaEliminare = [];
+
+  if (rateizzata) {
+    const importoRataNormalizzato = formatMoney(parseMoney(importoRata));
+
+    const pianoInvariato =
+      existing?.rateizzata &&
+      Array.isArray(existing.rate) &&
+      existing.rate.length === numeroRate &&
+      String(existing.importoRata || "") === importoRataNormalizzato &&
+      String(existing.primaScadenzaRata || existing.rate?.[0]?.scadenza || "") ===
+        String(primaScadenzaRata || "") &&
+      String(existing.frequenzaRate || "mensile") === String(frequenzaRate || "mensile");
+
+    if (pianoInvariato) {
+      rate = existing.rate;
+    } else {
+      if (Array.isArray(existing?.rate) && existing.rate.length > 0) {
+        const contieneDatiImportanti = existing.rate.some(
+          (rata) => rata.pagata || rata.dataPagamento || rata.ricevutaMeta
+        );
+
+        const messaggio = contieneDatiImportanti
+          ? "La modifica del piano rate sostituirà le rate esistenti e rimuoverà eventuali pagamenti o ricevute. Continuare?"
+          : "Vuoi sostituire il piano rate esistente con quello appena indicato?";
+
+        if (!confirm(messaggio)) return;
+
+        ricevuteDaEliminare = existing.rate
+          .map((rata) => rata.ricevutaMeta?.storageId)
+          .filter(Boolean);
+      }
+
+      rate = generaPianoRate(
+        numeroRate,
+        parseMoney(importoRataNormalizzato),
+        primaScadenzaRata,
+        frequenzaRate
+      );
+    }
+  } else if (Array.isArray(existing?.rate) && existing.rate.length > 0) {
+    if (
+      !confirm(
+        "Disattivando la rateizzazione saranno eliminate tutte le rate e le relative ricevute. Continuare?"
+      )
+    ) {
+      return;
+    }
+
+    ricevuteDaEliminare = existing.rate
+      .map((rata) => rata.ricevutaMeta?.storageId)
+      .filter(Boolean);
+  }
+
+  const id = existing?.id || Date.now();
+  let pdfMeta = existing?.pdfMeta || null;
 
   if (file) {
     await savePdfToDB(id, file);
@@ -772,17 +965,22 @@ async function addFattura() {
     };
   }
 
+  for (const storageId of ricevuteDaEliminare) {
+    await deletePdfFromDB(storageId);
+  }
+
   const tipoFinale =
     tipoFattura ||
     detectUtilityType(`${fornitore} ${numeroFattura} ${periodoFattura}`) ||
     riconosciTipoDaFornitore(fornitore) ||
     "Altro";
 
-  const rate = rateizzata
-    ? generaPianoRate(numeroRate, parseMoney(importoRata), primaScadenzaRata, frequenzaRate)
-    : [];
+  const pagataFinale = rateizzata
+    ? rate.length > 0 && rate.every((rata) => rata.pagata)
+    : !!existing?.pagata;
 
-  fatture.push({
+  const fatturaAggiornata = {
+    ...(existing || {}),
     id,
     fornitore,
     tipoFattura: tipoFinale,
@@ -797,22 +995,39 @@ async function addFattura() {
     consumo,
     unitaConsumo,
     pdfMeta,
-    pagata: false,
-    archiviata: false,
+    pagata: pagataFinale,
+    archiviata: !!existing?.archiviata,
     rateizzata,
     numeroRate: rateizzata ? numeroRate : 0,
     importoRata: rateizzata ? formatMoney(parseMoney(importoRata)) : "",
     primaScadenzaRata: rateizzata ? primaScadenzaRata : "",
     frequenzaRate: rateizzata ? frequenzaRate : "",
     rate,
-    createdAt: new Date().toISOString()
-  });
+    createdAt: existing?.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+
+  if (existingIndex >= 0) {
+    fatture[existingIndex] = fatturaAggiornata;
+  } else {
+    fatture.push(fatturaAggiornata);
+  }
 
   saveData();
   refreshAll();
   clearFatturaForm();
 
-  alert("Fattura salvata correttamente.");
+  if (existingIndex >= 0) {
+    showSection("archivio");
+    renderFatture();
+    alert(
+      rateizzata && !existing?.rateizzata
+        ? "Rateizzazione creata correttamente."
+        : "Fattura aggiornata correttamente."
+    );
+  } else {
+    alert("Fattura salvata correttamente.");
+  }
 }
 
 function hasUnpaidInstallments(f) {
@@ -1016,7 +1231,7 @@ function renderFatture() {
         ${f.pdr ? `<div class="small-text">PDR: ${escapeHtml(f.pdr)}</div>` : ""}
         ${f.codiceCliente ? `<div class="small-text">Codice cliente: ${escapeHtml(f.codiceCliente)}</div>` : ""}
         ${f.indirizzoFornitura ? `<div class="small-text">Fornitura: ${escapeHtml(f.indirizzoFornitura)}</div>` : ""}
-        ${f.consumo ? `<div class="small-text">Consumo: ${escapeHtml(f.consumo)} ${escapeHtml(f.unitaConsumo || "")}</div>` : ""}
+        ${f.consumo ? `<div class="small-text">Consumo: ${escapeHtml(formatConsumoScheda(f.consumo, f.unitaConsumo))}</div>` : ""}
         <div class="small-text">PDF: ${escapeHtml(f.pdfMeta?.name || "Non allegato")}</div>
 
         ${
@@ -1028,6 +1243,12 @@ function renderFatture() {
         ${rateHtml}
 
         <div class="actions">
+          <button class="small-btn edit-btn" onclick="editFattura(${f.id})">Modifica scheda</button>
+          ${
+            !f.rateizzata
+              ? `<button class="small-btn installment-create-btn" onclick="editFattura(${f.id}, true)">Crea rateizzazione</button>`
+              : ""
+          }
           ${
             !f.pagata
               ? `<button class="small-btn pay-btn" onclick="segnaPagata(${originalIndex})">Segna bolletta pagata</button>`

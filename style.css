@@ -605,3 +605,35 @@ select {
     text-align: center;
   }
 }
+
+
+/* Gestione modifica fattura e rateizzazione successiva */
+.edit-btn {
+  background: #6d28d9;
+  color: white;
+}
+
+.installment-create-btn {
+  background: #d97706;
+  color: white;
+}
+
+.edit-btn:hover,
+.installment-create-btn:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+}
+
+#existingPdfInfo {
+  margin-top: -4px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #eef6ff;
+  border: 1px solid #c7def6;
+  color: #124a80;
+}
+
+#fatturaFormCard {
+  scroll-margin-top: 90px;
+}

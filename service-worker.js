@@ -1,4 +1,4 @@
-const CACHE_NAME = "utenze-app-v2.1-fix-ai";
+const CACHE_NAME = "utenze-app-v2.2-edit-rate";
 
 const FILES_TO_CACHE = [
   "./",

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Gestione Utenze 2.1</title>
+  <title>Gestione Utenze 2.2</title>
   <link rel="stylesheet" href="style.css" />
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#005195" />
@@ -13,7 +13,7 @@
     <div class="topbar-inner">
       <div class="topbar-content">
         <div>
-          <h1>Gestione Utenze 2.1</h1>
+          <h1>Gestione Utenze 2.2</h1>
           <p class="subtitle">Bollette, rate, autoletture, notifiche, grafici e archivio PDF</p>
         </div>
         <div id="syncStatusIcon" class="sync-status idle" title="Stato sincronizzazione Cloud">☁️</div>
@@ -141,8 +141,9 @@
     </section>
 
     <section id="fatture" class="section hidden">
-      <div class="card">
-        <h2>Nuova Fattura</h2>
+      <div class="card" id="fatturaFormCard">
+        <h2 id="fatturaFormTitle">Nuova Fattura</h2>
+        <input type="hidden" id="editFatturaId" value="" />
 
         <div class="form-grid">
           <input id="fornitore" placeholder="Fornitore" />
@@ -169,6 +170,8 @@
           <input type="file" id="pdf" accept="application/pdf" />
         </div>
 
+        <p id="existingPdfInfo" class="hint hidden"></p>
+
         <div class="rate-box">
           <label class="checkbox-line">
             <input type="checkbox" id="rateizzata" onchange="toggleRateFields()" />
@@ -187,7 +190,8 @@
 
         <div class="button-row">
           <button class="secondary" onclick="leggiPDF()">Importa dati da PDF</button>
-          <button class="primary" onclick="addFattura()">Salva fattura</button>
+          <button class="primary" id="btnSalvaFattura" onclick="addFattura()">Salva fattura</button>
+          <button class="secondary hidden" id="btnAnnullaFattura" onclick="cancelEditFattura()">Annulla modifica</button>
         </div>
 
         <p class="hint">
