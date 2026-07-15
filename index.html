@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Gestione Utenze 2.2</title>
+  <title>Gestione Utenze 2.3</title>
   <link rel="stylesheet" href="style.css" />
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#005195" />
@@ -13,7 +13,7 @@
     <div class="topbar-inner">
       <div class="topbar-content">
         <div>
-          <h1>Gestione Utenze 2.2</h1>
+          <h1>Gestione Utenze 2.3</h1>
           <p class="subtitle">Bollette, rate, autoletture, notifiche, grafici e archivio PDF</p>
         </div>
         <div id="syncStatusIcon" class="sync-status idle" title="Stato sincronizzazione Cloud">☁️</div>
@@ -194,6 +194,17 @@
           <button class="secondary hidden" id="btnAnnullaFattura" onclick="cancelEditFattura()">Annulla modifica</button>
         </div>
 
+        <div id="ocrProgressBox" class="ocr-progress hidden" aria-live="polite">
+          <div class="ocr-progress-header">
+            <strong id="ocrProgressTitle">Riconoscimento OCR</strong>
+            <span id="ocrProgressPercent">0%</span>
+          </div>
+          <div class="ocr-progress-track">
+            <div id="ocrProgressBar" class="ocr-progress-bar" style="width:0%"></div>
+          </div>
+          <div id="ocrProgressText" class="small-text">Preparazione...</div>
+        </div>
+
         <p class="hint">
           L’app prova a riconoscere gestore, tipo utenza, POD/PDR, consumi e piano rate dal PDF. Controlla sempre i dati prima di salvare.
         </p>
@@ -314,6 +325,7 @@
   </main>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@7/dist/tesseract.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="app.js"></script>
 

@@ -1,4 +1,4 @@
-const CACHE_NAME = "utenze-app-v2.2-edit-rate";
+const CACHE_NAME = "utenze-app-v2.3-ocr";
 
 const FILES_TO_CACHE = [
   "./",

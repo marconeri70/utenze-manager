@@ -2121,6 +2121,188 @@ async function verificaCollegamentoAI() {
   );
 }
 
+function setOCRProgress({
+  visible = true,
+  title = "Riconoscimento OCR",
+  text = "Preparazione...",
+  percent = 0
+} = {}) {
+  const box = document.getElementById("ocrProgressBox");
+  const titleElement = document.getElementById("ocrProgressTitle");
+  const textElement = document.getElementById("ocrProgressText");
+  const percentElement = document.getElementById("ocrProgressPercent");
+  const barElement = document.getElementById("ocrProgressBar");
+
+  if (!box) return;
+
+  box.classList.toggle("hidden", !visible);
+
+  const safePercent = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+
+  if (titleElement) titleElement.textContent = title;
+  if (textElement) textElement.textContent = text;
+  if (percentElement) percentElement.textContent = `${safePercent}%`;
+  if (barElement) barElement.style.width = `${safePercent}%`;
+}
+
+function hideOCRProgress(delay = 0) {
+  window.setTimeout(() => {
+    setOCRProgress({ visible: false, percent: 0 });
+  }, delay);
+}
+
+async function renderPdfPageForOCR(page) {
+  const baseViewport = page.getViewport({ scale: 1 });
+  const maxWidth = 1800;
+  const scale = Math.max(1.5, Math.min(2.2, maxWidth / baseViewport.width));
+  const viewport = page.getViewport({ scale });
+
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.ceil(viewport.width);
+  canvas.height = Math.ceil(viewport.height);
+
+  const context = canvas.getContext("2d", {
+    alpha: false,
+    willReadFrequently: true
+  });
+
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  await page.render({
+    canvasContext: context,
+    viewport,
+    background: "rgb(255,255,255)"
+  }).promise;
+
+  return canvas;
+}
+
+function improveCanvasForOCR(canvas) {
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+  const pixels = imageData.data;
+
+  for (let i = 0; i < pixels.length; i += 4) {
+    const gray = Math.round(
+      pixels[i] * 0.299 +
+      pixels[i + 1] * 0.587 +
+      pixels[i + 2] * 0.114
+    );
+
+    // Contrasto leggero: conserva loghi e testi sottili senza una soglia troppo aggressiva.
+    const contrasted = Math.max(0, Math.min(255, (gray - 128) * 1.25 + 128));
+
+    pixels[i] = contrasted;
+    pixels[i + 1] = contrasted;
+    pixels[i + 2] = contrasted;
+    pixels[i + 3] = 255;
+  }
+
+  context.putImageData(imageData, 0, 0);
+  return canvas;
+}
+
+function tesseractStatusToItalian(status) {
+  const labels = {
+    "loading tesseract core": "Caricamento motore OCR",
+    "initializing tesseract": "Inizializzazione OCR",
+    "loading language traineddata": "Caricamento lingua italiana",
+    "initializing api": "Preparazione riconoscimento",
+    "recognizing text": "Lettura del testo"
+  };
+
+  return labels[status] || "Riconoscimento del testo";
+}
+
+async function extractTextWithOCR(pdf) {
+  if (!window.Tesseract?.createWorker) {
+    throw new Error(
+      "Il modulo OCR non è stato caricato. Controlla la connessione Internet e aggiorna la pagina."
+    );
+  }
+
+  const maxPages = 10;
+  const pagesToProcess = Math.min(pdf.numPages, maxPages);
+  let currentPage = 1;
+
+  setOCRProgress({
+    visible: true,
+    title: "PDF scansionato: avvio OCR",
+    text: "Il primo utilizzo può richiedere più tempo per caricare la lingua italiana.",
+    percent: 1
+  });
+
+  const worker = await Tesseract.createWorker("ita", 1, {
+    logger: (message) => {
+      const pageBase = ((currentPage - 1) / pagesToProcess) * 100;
+      const pageShare = 100 / pagesToProcess;
+      const localProgress = Number(message.progress || 0);
+      const totalProgress = pageBase + pageShare * localProgress;
+
+      setOCRProgress({
+        visible: true,
+        title: `OCR pagina ${currentPage} di ${pagesToProcess}`,
+        text: tesseractStatusToItalian(message.status),
+        percent: totalProgress
+      });
+    }
+  });
+
+  let ocrText = "";
+
+  try {
+    await worker.setParameters({
+      preserve_interword_spaces: "1",
+      tessedit_pageseg_mode: "3"
+    });
+
+    for (let pageNumber = 1; pageNumber <= pagesToProcess; pageNumber++) {
+      currentPage = pageNumber;
+
+      setOCRProgress({
+        visible: true,
+        title: `OCR pagina ${pageNumber} di ${pagesToProcess}`,
+        text: "Conversione della pagina in immagine...",
+        percent: ((pageNumber - 1) / pagesToProcess) * 100
+      });
+
+      const page = await pdf.getPage(pageNumber);
+      let canvas = await renderPdfPageForOCR(page);
+      canvas = improveCanvasForOCR(canvas);
+
+      try {
+        const result = await worker.recognize(canvas);
+        const pageText = String(result?.data?.text || "").trim();
+
+        if (pageText) {
+          ocrText += `\n\n--- PAGINA ${pageNumber} ---\n${pageText}`;
+        }
+      } catch (pageError) {
+        console.error(`Errore OCR pagina ${pageNumber}:`, pageError);
+      } finally {
+        canvas.width = 1;
+        canvas.height = 1;
+        page.cleanup?.();
+      }
+    }
+  } finally {
+    await worker.terminate();
+  }
+
+  setOCRProgress({
+    visible: true,
+    title: "OCR completato",
+    text:
+      pdf.numPages > maxPages
+        ? `Analizzate le prime ${maxPages} pagine su ${pdf.numPages}.`
+        : `Analizzate ${pagesToProcess} pagine.`,
+    percent: 100
+  });
+
+  return ocrText.replace(/\u0000/g, "").trim();
+}
+
 async function leggiPDF() {
   const file = document.getElementById("pdf").files[0];
 
@@ -2131,13 +2313,25 @@ async function leggiPDF() {
 
   const btn = document.querySelector("button[onclick='leggiPDF()']");
   const originalText = btn?.textContent || "Importa dati da PDF";
+  let usedOCR = false;
 
   if (btn) {
-    btn.textContent = "Analisi IA in corso (attendere)...";
+    btn.textContent = "Analisi documento in corso...";
     btn.disabled = true;
   }
 
+  setOCRProgress({
+    visible: true,
+    title: "Analisi del PDF",
+    text: "Ricerca del testo digitale...",
+    percent: 2
+  });
+
   try {
+    if (!window.pdfjsLib) {
+      throw new Error("Il lettore PDF non è stato caricato.");
+    }
+
     if (window.pdfjsLib?.GlobalWorkerOptions) {
       pdfjsLib.GlobalWorkerOptions.workerSrc =
         "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
@@ -2150,6 +2344,13 @@ async function leggiPDF() {
     let testoCompleto = "";
 
     for (let i = 1; i <= pdf.numPages; i++) {
+      setOCRProgress({
+        visible: true,
+        title: "Analisi del PDF",
+        text: `Controllo testo digitale: pagina ${i} di ${pdf.numPages}`,
+        percent: Math.min(20, (i / pdf.numPages) * 20)
+      });
+
       const page = await pdf.getPage(i);
       const content = await page.getTextContent();
 
@@ -2158,17 +2359,38 @@ async function leggiPDF() {
         content.items
           .map((item) => `${item.str || ""}${item.hasEOL ? "\n" : " "}`)
           .join("");
+
+      page.cleanup?.();
     }
 
     testoCompleto = testoCompleto.replace(/\u0000/g, "").trim();
 
     if (testoCompleto.length < 25) {
-      alert(
-        "Il PDF è stato aperto, ma non contiene testo selezionabile.\n\n" +
-          "Probabilmente è una scansione o una fotografia salvata in PDF. " +
-          "Per questo documento serve il riconoscimento OCR delle immagini."
-      );
-      return;
+      usedOCR = true;
+
+      if (btn) {
+        btn.textContent = "OCR in corso: non chiudere...";
+      }
+
+      testoCompleto = await extractTextWithOCR(pdf);
+
+      if (testoCompleto.length < 25) {
+        throw new Error(
+          "L'OCR è terminato, ma non è riuscito a riconoscere testo sufficiente. " +
+          "Prova con una scansione più nitida, ben orientata e con maggiore contrasto."
+        );
+      }
+    }
+
+    setOCRProgress({
+      visible: true,
+      title: usedOCR ? "OCR completato" : "Testo PDF trovato",
+      text: "Analisi intelligente dei dati della bolletta...",
+      percent: usedOCR ? 100 : 35
+    });
+
+    if (btn) {
+      btn.textContent = "Analisi IA in corso...";
     }
 
     const localData = extractLocalBillData(testoCompleto);
@@ -2178,16 +2400,40 @@ async function leggiPDF() {
       const mergedData = { ...localData, ...aiData };
       applyExtractedBillData(mergedData);
 
-      alert("Analisi completata. Controlla i campi prima di salvare.");
+      setOCRProgress({
+        visible: true,
+        title: "Analisi completata",
+        text: usedOCR
+          ? "Testo riconosciuto con OCR e campi compilati."
+          : "Campi compilati dal testo digitale del PDF.",
+        percent: 100
+      });
+
+      hideOCRProgress(3500);
+
+      alert(
+        usedOCR
+          ? "OCR e analisi completati. Controlla i campi prima di salvare."
+          : "Analisi completata. Controlla i campi prima di salvare."
+      );
       return;
     }
 
     if (hasUsefulBillData(localData)) {
       applyExtractedBillData(localData);
 
+      setOCRProgress({
+        visible: true,
+        title: "Recupero parziale completato",
+        text: "Alcuni dati sono stati estratti direttamente dal documento.",
+        percent: 100
+      });
+
+      hideOCRProgress(5000);
+
       alert(
         "L'Intelligenza Artificiale non ha risposto correttamente, " +
-          "ma l'app ha recuperato alcuni dati direttamente dal PDF.\n\n" +
+          "ma l'app ha recuperato alcuni dati direttamente dal documento.\n\n" +
           "Motivo AI: " +
           (aiData?.error || SyncManager.lastError || "Risposta non valida del Worker.") +
           "\n\nControlla e completa i campi prima di salvare."
@@ -2195,16 +2441,23 @@ async function leggiPDF() {
       return;
     }
 
-    alert(
-      "Analisi non completata.\n\nMotivo: " +
-        (aiData?.error || SyncManager.lastError || "Il Worker non ha restituito dati validi.") +
-        "\n\nControlla il collegamento Cloudflare e verifica che il PDF contenga testo selezionabile."
+    throw new Error(
+      aiData?.error ||
+        SyncManager.lastError ||
+        "Il documento è stato letto, ma non sono stati individuati dati utili."
     );
   } catch (error) {
-    console.error("Errore PDF/IA:", error);
+    console.error("Errore PDF/OCR/IA:", error);
+
+    setOCRProgress({
+      visible: true,
+      title: "Analisi non completata",
+      text: error?.message || "Errore sconosciuto",
+      percent: 0
+    });
 
     alert(
-      "Errore tecnico durante la lettura del documento.\n\nDettaglio: " +
+      "Errore durante la lettura del documento.\n\nDettaglio: " +
         (error?.message || "errore sconosciuto")
     );
   } finally {

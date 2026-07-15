@@ -637,3 +637,43 @@ select {
 #fatturaFormCard {
   scroll-margin-top: 90px;
 }
+
+
+/* OCR automatico per PDF scansionati */
+.ocr-progress {
+  margin-top: 14px;
+  padding: 13px 14px;
+  border: 1px solid #c7def6;
+  border-radius: 13px;
+  background: #eef6ff;
+  color: #124a80;
+}
+
+.ocr-progress-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 9px;
+}
+
+.ocr-progress-track {
+  width: 100%;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dbeafe;
+  margin-bottom: 8px;
+}
+
+.ocr-progress-bar {
+  height: 100%;
+  border-radius: inherit;
+  background: #0b6fc2;
+  transition: width 0.2s ease;
+}
+
+#ocrProgressPercent {
+  min-width: 42px;
+  text-align: right;
+  font-weight: bold;
+}
