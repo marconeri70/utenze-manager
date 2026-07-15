@@ -62,7 +62,7 @@ const SyncManager = {
         utenze = data.utenze || [];
         fatture = data.fatture || [];
         autoletture = data.autoletture || [];
-        saveData(false);
+        normalizeStoredData();
         refreshAll();
       }
       this.updateStatus('idle');
@@ -252,6 +252,32 @@ function normalizeStoredData() {
       riconosciTipoDaFornitore(f.fornitore || "") ||
       "Altro";
 
+    const invoiceTotal = parseMoney(f.importo);
+    const normalizedRates = Array.isArray(f.rate)
+      ? f.rate.map((r, idx) => {
+          const repairedAmount = repairPossibleCentsError(
+            r.importo || "0.00",
+            invoiceTotal
+          );
+
+          return {
+            id: r.id || `${f.id || Date.now()}-r${idx + 1}`,
+            numero: r.numero || idx + 1,
+            importo: formatMoney(repairedAmount),
+            scadenza: r.scadenza || "",
+            pagata: !!r.pagata,
+            dataPagamento: r.dataPagamento || "",
+            note: r.note || "",
+            ricevutaMeta: r.ricevutaMeta || null
+          };
+        })
+      : [];
+
+    const repairedInstallmentAmount = repairPossibleCentsError(
+      f.importoRata || normalizedRates[0]?.importo || 0,
+      invoiceTotal
+    );
+
     return {
       rate: [],
       rateizzata: false,
@@ -259,16 +285,14 @@ function normalizeStoredData() {
       pagata: false,
       ...f,
       tipoFattura: inferredType,
-      rate: Array.isArray(f.rate) ? f.rate.map((r, idx) => ({
-        id: r.id || `${f.id || Date.now()}-r${idx + 1}`,
-        numero: r.numero || idx + 1,
-        importo: r.importo || "0.00",
-        scadenza: r.scadenza || "",
-        pagata: !!r.pagata,
-        dataPagamento: r.dataPagamento || "",
-        note: r.note || "",
-        ricevutaMeta: r.ricevutaMeta || null
-      })) : [],
+      importo: f.importo || "",
+      rate: normalizedRates,
+      numeroRate: f.rateizzata
+        ? Number(f.numeroRate || normalizedRates.length || 0)
+        : 0,
+      importoRata: f.rateizzata && repairedInstallmentAmount
+        ? formatMoney(repairedInstallmentAmount)
+        : "",
       rateizzata: !!f.rateizzata,
       archiviata: !!f.archiviata,
       pagata: !!f.pagata,
@@ -389,14 +413,81 @@ function daysDiffFromToday(dateString) {
 }
 
 function parseMoney(value) {
-  if (typeof value !== "string") value = String(value ?? "");
-  const normalized = value.replace(/\./g, "").replace(",", ".").replace(/[^\d.]/g, "");
-  const num = parseFloat(normalized);
-  return Number.isFinite(num) ? num : 0;
+  if (value === null || value === undefined || value === "") return 0;
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+
+  let raw = String(value)
+    .trim()
+    .replace(/\s/g, "")
+    .replace(/[€$£]/g, "")
+    .replace(/[^\d,.\-]/g, "");
+
+  if (!raw || raw === "-") return 0;
+
+  const negative = raw.startsWith("-");
+  raw = raw.replace(/-/g, "");
+
+  const lastComma = raw.lastIndexOf(",");
+  const lastDot = raw.lastIndexOf(".");
+  let normalized = raw;
+
+  if (lastComma !== -1 && lastDot !== -1) {
+    // Il separatore che compare per ultimo è considerato decimale.
+    if (lastComma > lastDot) {
+      normalized = raw.replace(/\./g, "").replace(",", ".");
+    } else {
+      normalized = raw.replace(/,/g, "");
+    }
+  } else if (lastComma !== -1) {
+    const decimals = raw.length - lastComma - 1;
+
+    if (decimals === 1 || decimals === 2) {
+      normalized = raw.replace(/\./g, "").replace(",", ".");
+    } else {
+      normalized = raw.replace(/,/g, "");
+    }
+  } else if (lastDot !== -1) {
+    const decimals = raw.length - lastDot - 1;
+    const dotCount = (raw.match(/\./g) || []).length;
+
+    if (dotCount === 1 && (decimals === 1 || decimals === 2)) {
+      // Esempio: 72.00 = settantadue euro, non settemiladuecento.
+      normalized = raw;
+    } else if (dotCount > 1 && (decimals === 1 || decimals === 2)) {
+      const parts = raw.split(".");
+      const decimalPart = parts.pop();
+      normalized = `${parts.join("")}.${decimalPart}`;
+    } else {
+      normalized = raw.replace(/\./g, "");
+    }
+  }
+
+  const num = Number.parseFloat(normalized);
+  if (!Number.isFinite(num)) return 0;
+
+  return negative ? -num : num;
 }
 
 function formatMoney(num) {
-  return Number(num).toFixed(2);
+  const parsed = Number(num);
+  return Number.isFinite(parsed) ? parsed.toFixed(2) : "0.00";
+}
+
+function repairPossibleCentsError(value, invoiceTotal = 0) {
+  const amount = parseMoney(value);
+  const total = parseMoney(invoiceTotal);
+
+  // Corregge automaticamente dati già salvati come 7200.00 anziché 72.00.
+  if (
+    total > 0 &&
+    amount > total &&
+    amount / 100 > 0 &&
+    amount / 100 <= total
+  ) {
+    return amount / 100;
+  }
+
+  return amount;
 }
 
 function getProviderIcon(name) {
@@ -1956,9 +2047,16 @@ function normalizeDateForInput(value) {
 }
 
 function cleanExtractedMoney(value) {
-  if (!value) return "";
-  const match = String(value).match(/(\d{1,3}(?:[.\s]\d{3})*(?:,\d{2})|\d+(?:[.,]\d{2}))/);
-  return match ? match[1].replace(/\s/g, "") : "";
+  if (value === null || value === undefined || String(value).trim() === "") {
+    return "";
+  }
+
+  const source = String(value).trim();
+  const hasDigits = /\d/.test(source);
+  if (!hasDigits) return "";
+
+  const amount = parseMoney(source);
+  return Number.isFinite(amount) ? formatMoney(amount) : "";
 }
 
 function extractLocalBillData(text) {
@@ -2099,8 +2197,14 @@ function applyExtractedBillData(data) {
     }
 
     if (importoRataAI) {
+      const totalInvoice = parseMoney(data.importo || document.getElementById("importo").value);
+      const repairedRateAmount = repairPossibleCentsError(
+        importoRataAI,
+        totalInvoice
+      );
+
       document.getElementById("importoRata").value =
-        cleanExtractedMoney(importoRataAI) || importoRataAI;
+        formatMoney(repairedRateAmount);
     }
   }
 }

@@ -1,4 +1,4 @@
-const CACHE_NAME = "utenze-app-v2.3-ocr";
+const CACHE_NAME = "utenze-app-v2.4-money-fix";
 
 const FILES_TO_CACHE = [
   "./",
